@@ -39,7 +39,12 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	discs, free := discounts.Detect(models, now)
+	discs, free, err := discounts.FetchDiscounts(ctx, hc, models, now)
+	if err != nil {
+		// individual endpoint failures are tolerable; the affected models
+		// are simply missing from the report
+		log.Printf("endpoint fetch failures (continuing): %v", err)
+	}
 
 	if len(discs) == 0 {
 		return deliver(ctx, hc, token, chatID, format.NoDiscounts(free, now))

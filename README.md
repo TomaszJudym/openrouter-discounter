@@ -10,36 +10,29 @@ cron is exact; GitHub delivers within ±15 min under load.
 
 ## Discount detection
 
-The catalog is fetched from `https://openrouter.ai/api/v1/models` (444+ models
-as of Sep 2026). The live `pricing.overrides` schema is an array of tiered
-pricing entries:
+The catalog is fetched from `https://openrouter.ai/api/v1/models`, then every
+non-free model's per-provider pricing from
+`GET /api/v1/models/{author}/{slug}/endpoints` (444+ models, concurrency 8,
+retry on 429/5xx). This is the same data the
+[collections/discounted-models](https://openrouter.ai/collections/discounted-models)
+page is built from; there is no bulk or collections API, so the scan walks
+the models.
 
-```json
-"pricing": {
-  "prompt": "0.00000066",
-  "overrides": [
-    { "utc_days": ["saturday","sunday"],
-      "prompt": "0.00000066" },
-    { "utc_days": ["monday","tuesday","wednesday","thursday","friday"],
-      "utc_start": 400, "utc_end": 600,
-      "prompt": "0.00000132" },
-    { "min_prompt_tokens": 272000, "prompt": "0.00002" }
-  ]
-}
-```
+A model is **discounted** iff at least one provider endpoint advertises
+`pricing.discount > 0`. On such an endpoint `pricing.prompt` is already the
+discounted price; the list price is `prompt/(1-discount)` — e.g. StreamLake's
+`0.0000006426` = `0.0000014` × (1−0.541) against the standard $1.40/Mtok
+list. The reported row uses the cheapest effective prompt price among the
+model's discounted endpoints; Δ% = −discount.
 
-- `utc_days` is the time window (UTC weekdays); `utc_start`/`utc_end` are
-  prompt-size bucket bounds in Ktok (`utc_end: 0` = open-ended) — a token
-  dimension, not a time-of-day window.
-- A model is **discounted** iff an override whose `utc_days` contains the
-  current UTC weekday prices prompt below the top-level base price. The
-  reported price is the cheapest prompt price among today's windows; `was` is
-  the base price; Δ% = (price − was)/was. The API has no discount-percentage
-  field, so no inverse `was` derivation is needed.
-- Volume-only tiers (`min_prompt_tokens`, no `utc_days`) have no time window
-  and are ignored. Zero or null base pricing is excluded.
-- Models with a `:free` suffix are listed separately as free-tier info, never
-  as discounts.
+As a secondary signal, time-limited catalog windows on the model's own
+`pricing.overrides` (`utc_days` weekday windows priced below the top-level
+base price; `utc_start`/`utc_end` are prompt-size buckets in Ktok,
+`min_prompt_tokens` volume tiers ignored — they have no time window) are
+reported too. Endpoint rows take precedence for the same model.
+
+Models with a `:free` suffix are listed separately as free-tier info, never
+as discounts. Models whose endpoint fetch fails are skipped and logged.
 
 ## Sector scoring
 
@@ -53,7 +46,8 @@ Scores come from one request to
 `https://artificialanalysis.ai/api/v2/data/llms/models` (`x-api-key` header).
 AA model slugs/names are matched to OpenRouter ids by normalized identifier.
 Fetching sits behind the `rank.Provider` interface, so the data source can be
-swapped without touching ranking logic.
+swapped without touching ranking logic. All OpenRouter and AA calls are plain
+JSON APIs; no HTML is parsed anywhere.
 
 **Fallback**: if AA fails for any reason — missing key, network error, non-200,
 unparseable response, no scores for a sector — that sector ranks by Δ%
@@ -84,10 +78,14 @@ timestamp via a fixed zone. Zero discounts anywhere → one short
 MATH — top 10 discounted (AA Math Index)
 <pre>
 #  model                       price      was   Δ% score
-1  deepseek/deepseek-chat      $0.14    $0.28  -50  68.2
-2  qwen/qwen3-235b-a22b        $0.09    $0.18  -50   n/a
+1  z-ai/glm-4.7                $0.40    $0.55  -27  95.0
+2  minimax/minimax-m2          $0.26    $0.30  -15  78.3
+3  inception/mercury-2.5       $0.04    $0.20  -80   n/a
 </pre>
 ```
+
+The `price` column is the cheapest discounted provider's effective prompt
+price; `was` is that provider's list price.
 
 ## Setup
 

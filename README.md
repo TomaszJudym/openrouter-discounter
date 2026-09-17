@@ -4,6 +4,19 @@ Daily Telegram report of discounted OpenRouter models, ranked per category
 (math, long-context reasoning, finance) by Artificial Analysis benchmark
 scores. Runs on GitHub Actions daily at 07:00 JST.
 
+```
+tracker (GitHub Actions, daily 07:00 JST)
+  │
+  │ GET  openrouter.ai/api/v1/models                    ← catalog, base prices
+  │ GET  openrouter.ai/api/v1/models/{slug}/endpoints   ← per-provider pricing → discounts
+  │ GET  artificialanalysis.ai/api/v2/data/llms/models  ← benchmark scores
+  ▼
+rank top 10 per category (math, long-context, finance)
+  │
+  ▼
+Telegram ◄── POST api.telegram.org/bot…/sendMessage
+```
+
 ## Setup
 
 1. Create a bot with @BotFather, add it to your channel as admin.

@@ -17,14 +17,13 @@ import (
 const (
 	messageLimit = 4000
 	widthModel   = 24
-	widthPrice   = 8
-	widthWas     = 8
+	widthPair    = 12 // "was→now", per Mtok, 2 decimals
 	widthPct     = 4
 	widthScore   = 5
 
 	headerTimeLayout = "2 Jan 2006 15:04 JST"
 	noticePrefix     = "⚠️ scored only by price — Artificial Analysis error: "
-	freeTitle        = "Free tier (info only):"
+	freeTitle        = "Free tier:"
 )
 
 var htmlEscaper = strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;")
@@ -111,13 +110,12 @@ func table(sr rank.SectorResult) string {
 	}
 	var rows []string
 	if scored {
-		rows = append(rows, tableRow("#", "model", "price", "was", "Δ%", "score"))
+		rows = append(rows, tableRow("#", "model", "was→now", "Δ%", "score"))
 	} else {
-		rows = append(rows, tableRow("#", "model", "price", "was", "Δ%", ""))
+		rows = append(rows, tableRow("#", "model", "was→now", "Δ%", ""))
 	}
 	for i, r := range sr.Rows {
-		price := fmt.Sprintf("$%.2f", r.Price)
-		was := fmt.Sprintf("$%.2f", r.Was)
+		pair := fmt.Sprintf("%.2f→%.2f", r.Was, r.Price)
 		pct := fmt.Sprintf("%.0f", r.Pct)
 		model := htmlEscaper.Replace(truncateRunes(r.ModelID, widthModel))
 		var line string
@@ -126,9 +124,9 @@ func table(sr rank.SectorResult) string {
 			if r.Scored {
 				score = fmt.Sprintf("%.1f", r.Score)
 			}
-			line = tableRow(fmt.Sprint(i+1), model, price, was, pct, score)
+			line = tableRow(fmt.Sprint(i+1), model, pair, pct, score)
 		} else {
-			line = tableRow(fmt.Sprint(i+1), model, price, was, pct, "")
+			line = tableRow(fmt.Sprint(i+1), model, pair, pct, "")
 		}
 		rows = append(rows, line)
 	}
@@ -136,12 +134,11 @@ func table(sr rank.SectorResult) string {
 }
 
 // tableRow joins fixed-width columns; the score column is dropped when empty.
-func tableRow(rankCol, modelCol, priceCol, wasCol, pctCol, scoreCol string) string {
+func tableRow(rankCol, modelCol, pairCol, pctCol, scoreCol string) string {
 	cells := []string{
 		padRight(rankCol, 2, false),
 		padRight(modelCol, widthModel, false),
-		padRight(priceCol, widthPrice, true),
-		padRight(wasCol, widthWas, true),
+		padRight(pairCol, widthPair, true),
 		padRight(pctCol, widthPct, true),
 	}
 	if scoreCol != "" {

@@ -46,9 +46,9 @@ func TestMessagesLayoutAndAlignment(t *testing.T) {
 		"MATH — top 10 discounted (AA Math Index)",
 		"FINANCE — top 10 discounted (τ³-Banking)",
 		noticePrefix + "429 rate limit, retries exhausted",
-		"1  deepseek/deepseek-chat      $0.14    $0.28  -50  68.2",
-		"2  qwen/qwen3-235b-a22b        $0.09    $0.18  -50   n/a",
-		"Free tier (info only):",
+		"1  deepseek/deepseek-chat      0.28→0.14  -50  68.2",
+		"2  qwen/qwen3-235b-a22b        0.18→0.09  -50   n/a",
+		"Free tier:",
 		":free models today — 1",
 		"openai/gpt-oss-120b:free",
 	} {
@@ -72,18 +72,18 @@ func TestMessagesColumnAlignment(t *testing.T) {
 	lines := strings.Split(msgs[0], "\n")
 	var data []string
 	for _, l := range lines {
-		if strings.HasPrefix(l, "1  ") || strings.HasPrefix(l, "2  ") {
+		if strings.HasPrefix(l, "1 ") || strings.HasPrefix(l, "2 ") {
 			data = append(data, l)
 		}
 	}
 	if len(data) < 4 {
 		t.Fatalf("expected 4 data rows, got %d:\n%s", len(data), msgs[0])
 	}
-	// price columns start at the same rune offset in every row
-	col := runeIndex(data[0], "$")
+	// the was→now pair must start at the same rune offset in every row
+	col := runeIndex(data[0], "→")
 	for _, row := range data {
-		if got := runeIndex(row, "$"); got != col {
-			t.Errorf("price column misaligned: %q starts at %d, want %d", row, got, col)
+		if got := runeIndex(row, "→"); got != col {
+			t.Errorf("price column misaligned: %q arrow at %d, want %d", row, got, col)
 		}
 	}
 }
@@ -96,10 +96,10 @@ func TestMessagesEscapesHTML(t *testing.T) {
 		},
 	}}}
 	m := Messages(res, nil, noon())[0]
-	if strings.Contains(m, "<b>") {
+	if strings.Contains(m, "evil/<b>") {
 		t.Errorf("model name not escaped correctly:\n%s", m)
 	}
-	if !strings.Contains(m, "&lt;b&gt;&amp;amp;&lt;/b&gt;") {
+	if !strings.Contains(m, "evil/&lt;b&gt;&amp;amp;&lt;/b&gt;") {
 		t.Errorf("escaped name missing:\n%s", m)
 	}
 }

@@ -36,12 +36,12 @@ func TestRankScoredOrderingAndUnscoredLast(t *testing.T) {
 	if math.Sector != Math || len(math.Rows) != 3 || math.Err != "" {
 		t.Fatalf("Math sector = %+v, want 3 rows, no error", math)
 	}
-	// scored first by score desc (b 68.2, a 61.2), then unscored c by Δ%
+	// composite = 0.5×score + 0.5×(−Δ%): a = 55.6, b = 38.6; unscored c last
 	want := []struct {
 		id     string
 		score  float64
 		scored bool
-	}{{"b/model-b", 68.2, true}, {"a/model-a", 61.2, true}, {"c/model-c", 0, false}}
+	}{{"a/model-a", 61.2, true}, {"b/model-b", 68.2, true}, {"c/model-c", 0, false}}
 	for i, w := range want {
 		if got := math.Rows[i]; got.ModelID != w.id || got.Score != w.score || got.Scored != w.scored {
 			t.Errorf("Rows[%d] = %v, want %v", i, got, w)

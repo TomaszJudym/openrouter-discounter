@@ -55,6 +55,11 @@ type SectorResult struct {
 	Err    string
 }
 
+// scoreWeight is the share of the AA benchmark in the composite ranking
+// score; the remainder weights the discount (−Δ%). Both terms are 0-100, so
+// 0.5 means performance and price count equally.
+const scoreWeight = 0.5
+
 // Result is the full ranking. A non-empty GlobalErr marks every sector as
 // price-only and is surfaced once at the top of the message.
 type Result struct {
@@ -113,8 +118,9 @@ func Rank(ctx context.Context, discs []discounts.Discount, prov Provider) Result
 	return res
 }
 
-// sortRows orders by score descending then discount magnitude (Pct
-// ascending) when scores exist, and by discount magnitude alone otherwise.
+// sortRows orders scored models by the composite score (scoreWeight ×
+// benchmark + (1−scoreWeight) × discount) descending; unscored models rank
+// after scored ones by discount magnitude (Pct ascending).
 func sortRows(rows []Row, priceOnly bool) {
 	if priceOnly {
 		slices.SortStableFunc(rows, func(a, b Row) int { return cmp.Compare(a.Pct, b.Pct) })
@@ -128,12 +134,17 @@ func sortRows(rows []Row, priceOnly bool) {
 			return -1
 		}
 		if a.Scored {
-			if c := cmp.Compare(b.Score, a.Score); c != 0 {
+			if c := cmp.Compare(final(b), final(a)); c != 0 {
 				return c
 			}
 		}
 		return cmp.Compare(a.Pct, b.Pct)
 	})
+}
+
+// final is the composite 0-100 ranking value for a scored row.
+func final(r Row) float64 {
+	return scoreWeight*r.Score + (1-scoreWeight)*(-r.Pct)
 }
 
 func top10(rows []Row) []Row {

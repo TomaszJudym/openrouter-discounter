@@ -1,0 +1,42 @@
+name: daily
+
+on:
+  schedule:
+    # 22:00 UTC = 07:00 JST; JST has no DST, so a fixed cron is exact.
+    - cron: '0 22 * * *'
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: daily-discount
+  cancel-in-progress: false
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.1'
+
+      - name: Build and run
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHANNEL_ID: ${{ secrets.TELEGRAM_CHANNEL_ID }}
+          AA_API_KEY: ${{ secrets.AA_API_KEY }}
+        run: |
+          go build -o tracker ./cmd/tracker
+          ./tracker
+
+  keepalive:
+    # Required: GitHub disables scheduled workflows after 60 days of repo
+    # inactivity. This job counts as activity without creating dummy commits.
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
+      - uses: gautamkrishnar/keepalive-workflow@v2

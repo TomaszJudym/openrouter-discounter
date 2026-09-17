@@ -34,9 +34,11 @@ jobs:
 
   keepalive:
     # Required: GitHub disables scheduled workflows after 60 days of repo
-    # inactivity. This job counts as activity without creating dummy commits.
+    # inactivity. This job re-enables the workflow via the API (no dummy
+    # commits). gautamkrishnar/keepalive-workflow is ToS-blocked upstream.
+    if: github.event_name == 'schedule'
     runs-on: ubuntu-latest
     permissions:
       actions: write
     steps:
-      - uses: gautamkrishnar/keepalive-workflow@v2
+      - uses: liskin/gh-workflow-keepalive@v1

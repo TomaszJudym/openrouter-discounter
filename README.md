@@ -102,10 +102,12 @@ price; `was` is that provider's list price.
 ## Keepalive
 
 GitHub disables a schedule after 60 days of repo inactivity. The separate
-`keepalive` job (`gautamkrishnar/keepalive-workflow@v2`, API mode, no dummy
-commits) counts as activity and is the only activity guard in this setup —
-nothing else commits. It holds `actions: write`; every other workflow
-permission is explicitly empty.
+`keepalive` job (`liskin/gh-workflow-keepalive@v1`) re-enables the workflow
+via the API — no dummy commits — and is the only activity guard in this
+setup; nothing else commits. It holds `actions: write`; every other
+workflow permission is explicitly empty. It only runs on scheduled events.
+(Original plan used `gautamkrishnar/keepalive-workflow@v2`, which GitHub
+ToS-blocked in April 2025.)
 
 ## Security
 

@@ -14,6 +14,7 @@ import (
 	"github.com/tomaszjudym/openrouter-discounter/internal/aa"
 	"github.com/tomaszjudym/openrouter-discounter/internal/discounts"
 	"github.com/tomaszjudym/openrouter-discounter/internal/format"
+	"github.com/tomaszjudym/openrouter-discounter/internal/preset"
 	"github.com/tomaszjudym/openrouter-discounter/internal/rank"
 	"github.com/tomaszjudym/openrouter-discounter/internal/telegram"
 )
@@ -45,7 +46,6 @@ func run() error {
 		// are simply missing from the report
 		log.Printf("endpoint fetch failures (continuing): %v", err)
 	}
-
 	if len(discs) == 0 {
 		return deliver(ctx, hc, token, chatID, format.NoDiscounts(free, now))
 	}
@@ -62,7 +62,30 @@ func run() error {
 			return err
 		}
 	}
+	updatePresets(ctx, hc, res)
 	return nil
+}
+
+// updatePresets points the admech-* presets at each category's top 3 scored
+// models. Failures are logged and non-fatal: the Telegram report is the
+// primary output.
+func updatePresets(ctx context.Context, hc *http.Client, res rank.Result) {
+	key := os.Getenv("OPENROUTER_API_KEY")
+	if key == "" {
+		log.Printf("OPENROUTER_API_KEY not set; presets not updated")
+		return
+	}
+	pc := preset.New(hc, key)
+	for _, sr := range res.Sectors {
+		updated, err := pc.Update(ctx, sr)
+		if err != nil {
+			log.Printf("preset %s: %v", preset.Slugs[sr.Sector], err)
+			continue
+		}
+		if updated {
+			log.Printf("preset %s: new version with top-%d models", preset.Slugs[sr.Sector], preset.TopN)
+		}
+	}
 }
 
 func deliver(ctx context.Context, hc *http.Client, token, chatID, msg string) error {

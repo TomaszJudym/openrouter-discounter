@@ -15,6 +15,7 @@ rank top 10 per category (math, long-context, finance)
   │
   ▼
 Telegram ◄── POST api.telegram.org/bot…/sendMessage
+presets  ◄── POST openrouter.ai/api/v1/presets/{slug}/chat/completions
 ```
 
 ## Setup
@@ -26,6 +27,9 @@ Telegram ◄── POST api.telegram.org/bot…/sendMessage
    - `TELEGRAM_CHANNEL_ID` — `@name` or `-100…`
    - `AA_API_KEY` — free key from artificialanalysis.ai (Insights Platform →
      API key). Optional; without it, categories rank by discount only.
+   - `OPENROUTER_API_KEY` — key from openrouter.ai/keys. Optional; updates
+     the `admech-math` / `admech-long` / `admech-finance` presets with each
+     category's top 3.
 3. Actions → daily → Run workflow.
 
 ## Scoring

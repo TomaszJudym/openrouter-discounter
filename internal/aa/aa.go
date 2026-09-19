@@ -27,8 +27,8 @@ const (
 	baseBackoff   = 2 * time.Second
 )
 
-// Sector field names in the AA evaluations object. Math Index is already
-// 0-100; LCR and tau_banking are 0-1 fractions reported as 0-100.
+// Sector field names in the AA evaluations object. Math and Coding Index
+// are already 0-100; LCR and tau_banking are 0-1 fractions reported as 0-100.
 const (
 	fieldMath = "artificial_analysis_math_index"
 	fieldLCR  = "lcr"
@@ -40,6 +40,7 @@ type evaluations struct {
 	ArtificialAnalysisMathIndex float64 `json:"artificial_analysis_math_index"`
 	LCR                         float64 `json:"lcr"`
 	TauBanking                  float64 `json:"tau_banking"`
+	CodingIndex                 float64 `json:"artificial_analysis_coding_index"`
 }
 
 type model struct {
@@ -96,6 +97,7 @@ func (p *Provider) Scores(ctx context.Context) (map[rank.Sector]map[string]float
 		rank.Math:    {},
 		rank.LCR:     {},
 		rank.Finance: {},
+		rank.Code:    {},
 	}
 	for _, m := range r.Data {
 		id, ok := matches[normalize(m.Slug)]
@@ -116,6 +118,9 @@ func (p *Provider) Scores(ctx context.Context) (map[rank.Sector]map[string]float
 		}
 		if v := m.Evaluations.TauBanking; v != 0 {
 			out[rank.Finance][id] = v * fracToPct
+		}
+		if v := m.Evaluations.CodingIndex; v != 0 {
+			out[rank.Code][id] = v
 		}
 	}
 	return out, nil
@@ -152,7 +157,7 @@ func (p *Provider) get(ctx context.Context, url string) ([]byte, error) {
 			continue
 		}
 		body, readErr := io.ReadAll(io.LimitReader(resp.Body, maxBodyBytes))
-		resp.Body.Close()
+		_ = resp.Body.Close() // read path: a close error is not actionable
 		switch {
 		case readErr != nil:
 			lastErr = fmt.Errorf("read response: %w", readErr)

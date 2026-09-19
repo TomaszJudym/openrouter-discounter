@@ -56,7 +56,7 @@ func TestMessagesLayoutAndAlignment(t *testing.T) {
 			t.Errorf("message missing %q:\n%s", want, m)
 		}
 	}
-	for _, line := range strings.Split(m, "\n") {
+	for line := range strings.SplitSeq(m, "\n") {
 		// the 80-char budget applies to table lines; the notice prefix is
 		// fixed wording and can exceed it (spec example is 86 chars)
 		if !strings.HasPrefix(line, "⚠️") {
@@ -114,7 +114,7 @@ func TestMessagesModelTruncation(t *testing.T) {
 	if !strings.Contains(m, "vendor/"+strings.Repeat("m", 16)+"…") {
 		t.Errorf("truncated model name missing:\n%s", m)
 	}
-	for _, l := range strings.Split(m, "\n") {
+	for l := range strings.SplitSeq(m, "\n") {
 		if strings.Contains(l, long) {
 			t.Errorf("untruncated model name present: %q", l)
 		}
@@ -192,9 +192,9 @@ func manyRows() []rank.Row {
 }
 
 func runeIndex(s, sub string) int {
-	pos := strings.Index(s, sub)
-	if pos < 0 {
+	before, _, ok := strings.Cut(s, sub)
+	if !ok {
 		return -1
 	}
-	return len([]rune(s[:pos]))
+	return len([]rune(before))
 }

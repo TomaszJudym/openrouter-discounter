@@ -38,7 +38,7 @@ func serverFor(t *testing.T, rec *recorder, current *presetResponse, getStatus i
 			w.WriteHeader(getStatus)
 			return
 		}
-		w.Write([]byte(`{"data":{"slug":"x","designated_version":` + mustJSON(current.Data.DesignatedVersion) + `}}`))
+		_, _ = w.Write([]byte(`{"data":{"slug":"x","designated_version":` + mustJSON(current.Data.DesignatedVersion) + `}}`))
 	})
 	mux.HandleFunc("POST /api/v1/presets/{slug}/chat/completions", func(w http.ResponseWriter, r *http.Request) {
 		rec.postSlugs = append(rec.postSlugs, r.URL.Path)
@@ -50,7 +50,7 @@ func serverFor(t *testing.T, rec *recorder, current *presetResponse, getStatus i
 		if r.Header.Get("Authorization") != "Bearer test-or-key" {
 			t.Errorf("missing auth header on POST %s", r.URL.Path)
 		}
-		w.Write([]byte(`{"data":{"slug":"x","designated_version":{"version":9}}}`))
+		_, _ = w.Write([]byte(`{"data":{"slug":"x","designated_version":{"version":9}}}`))
 	})
 	srv := httptest.NewTestServer(t, mux)
 	_ = srv.Client()
@@ -71,6 +71,14 @@ func matchingVersion() presetResponse {
 	r.Data.DesignatedVersion.Config.Models = []string{"z-ai/glm-4.7", "deepseek/deepseek-v3.1-terminus", "minimax/minimax-m2"}
 	r.Data.DesignatedVersion.Config.Verbosity = verbosity
 	return r
+}
+
+func TestSlugsCoverAllSectors(t *testing.T) {
+	for _, sec := range rank.Sectors {
+		if got := Slugs[sec]; !strings.HasPrefix(got, "admech-") {
+			t.Errorf("Slugs[%s] = %q, want an admech-* slug", sec, got)
+		}
+	}
 }
 
 func TestUpdatePostsTop3Scored(t *testing.T) {

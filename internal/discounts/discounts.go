@@ -118,7 +118,7 @@ func Fetch(ctx context.Context, hc *http.Client) ([]Model, error) {
 	if err != nil {
 		return nil, fmt.Errorf("GET %s: %w", URL, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }() // read-only: a close error is not actionable
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBodyBytes))
 	if err != nil {
 		return nil, fmt.Errorf("read body: %w", err)
@@ -210,7 +210,7 @@ func fetchEndpoints(ctx context.Context, hc *http.Client, id string) ([]Endpoint
 			continue
 		}
 		body, readErr := io.ReadAll(io.LimitReader(resp.Body, maxBodyBytes))
-		resp.Body.Close()
+		_ = resp.Body.Close() // read path: a close error is not actionable
 		switch {
 		case readErr != nil:
 			lastErr = fmt.Errorf("read response: %w", readErr)

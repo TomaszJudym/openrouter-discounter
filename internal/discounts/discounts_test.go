@@ -144,12 +144,12 @@ func TestFetchDiscountsMergesEndpointAndWindowRows(t *testing.T) {
 		mu.Unlock()
 		switch {
 		case strings.HasPrefix(r.URL.Path, "/models/vendor/promo/"):
-			fmt.Fprint(w, `{"data":{"id":"vendor/promo","endpoints":[{"provider_name":"Cheap","pricing":{"prompt":"0.0000005","completion":"0.000002","discount":0.5}},{"provider_name":"List","pricing":{"prompt":"0.000001","completion":"0.000004","discount":0}}]}}`)
+			_, _ = fmt.Fprint(w, `{"data":{"id":"vendor/promo","endpoints":[{"provider_name":"Cheap","pricing":{"prompt":"0.0000005","completion":"0.000002","discount":0.5}},{"provider_name":"List","pricing":{"prompt":"0.000001","completion":"0.000004","discount":0}}]}}`)
 		case strings.HasPrefix(r.URL.Path, "/models/vendor/windowonly/"):
-			fmt.Fprint(w, `{"data":{"id":"vendor/windowonly","endpoints":[{"provider_name":"List","pricing":{"prompt":"0.000002","completion":"0.000008","discount":0}}]}}`)
+			_, _ = fmt.Fprint(w, `{"data":{"id":"vendor/windowonly","endpoints":[{"provider_name":"List","pricing":{"prompt":"0.000002","completion":"0.000008","discount":0}}]}}`)
 		case strings.HasPrefix(r.URL.Path, "/models/vendor/broken/"):
 			w.WriteHeader(http.StatusForbidden)
-			fmt.Fprint(w, `{"error":"nope"}`)
+			_, _ = fmt.Fprint(w, `{"error":"nope"}`)
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -207,7 +207,7 @@ func TestFetchEndpointsParsesPricing(t *testing.T) {
 	old := endpointsURLFormat
 	t.Cleanup(func() { endpointsURLFormat = old })
 	srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		fmt.Fprint(w, `{"data":{"id":"inception/mercury-2.5","endpoints":[
+		_, _ = fmt.Fprint(w, `{"data":{"id":"inception/mercury-2.5","endpoints":[
 			{"provider_name":"Inception","pricing":{"prompt":"0.00000004","completion":"0.00000015","discount":0.8}},
 			{"provider_name":"Ambient","pricing":{"prompt":"0.0000006","completion":"0.000002","discount":0}}]}}`)
 	}))

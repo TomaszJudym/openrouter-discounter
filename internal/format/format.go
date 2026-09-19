@@ -175,7 +175,7 @@ func freeTierBlock(free []string) string {
 	}
 	var b strings.Builder
 	b.WriteString(freeTitle + "\n<pre>\n")
-	b.WriteString(fmt.Sprintf(":free models today — %d\n", len(free)))
+	fmt.Fprintf(&b, ":free models today — %d\n", len(free))
 	b.WriteString(htmlEscaper.Replace(strings.Join(free, ", ")))
 	b.WriteString("\n</pre>")
 	return b.String()

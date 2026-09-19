@@ -18,6 +18,7 @@ const (
 	Math    Sector = "math"
 	LCR     Sector = "long-context-reasoning"
 	Finance Sector = "finance"
+	Code    Sector = "code"
 )
 
 // Label is the display header for the sector.
@@ -29,12 +30,14 @@ func (s Sector) Label() string {
 		return "LONG-CONTEXT REASONING — top 10 discounted (AA-LCR)"
 	case Finance:
 		return "FINANCE — top 10 discounted (τ³-Banking)"
+	case Code:
+		return "CODE — top 10 discounted (AA Coding Index)"
 	}
 	return string(s)
 }
 
 // Sectors lists the ranked sectors in report order.
-var Sectors = []Sector{Math, LCR, Finance}
+var Sectors = []Sector{Math, LCR, Finance, Code}
 
 // Row is one ranked model. Price and Was are USD per Mtok; Pct is negative
 // for a discount. Score is the sector benchmark value (0-100) when Scored.

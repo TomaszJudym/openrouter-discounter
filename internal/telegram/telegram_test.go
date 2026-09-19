@@ -23,7 +23,7 @@ func TestSendSuccess(t *testing.T) {
 		if err := json.UnmarshalRead(r.Body, &got); err != nil {
 			t.Errorf("decode body: %v", err)
 		}
-		w.Write([]byte(`{"ok":true,"result":{"message_id":1}}`))
+		_, _ = w.Write([]byte(`{"ok":true,"result":{"message_id":1}}`))
 	}))
 	err := Send(t.Context(), srv.Client(), testToken, "@mychannel", "<b>hello</b>")
 	if err != nil {
@@ -37,7 +37,7 @@ func TestSendSuccess(t *testing.T) {
 func TestSendErrorBodyCarriesAPIMessageNotToken(t *testing.T) {
 	srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
-		w.Write([]byte(`{"ok":false,"error_code":400,"description":"Bad Request: chat not found"}`))
+		_, _ = w.Write([]byte(`{"ok":false,"error_code":400,"description":"Bad Request: chat not found"}`))
 	}))
 	err := Send(t.Context(), srv.Client(), testToken, "@nope", "msg")
 	if err == nil {

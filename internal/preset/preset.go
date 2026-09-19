@@ -35,6 +35,7 @@ var Slugs = map[rank.Sector]string{
 	rank.Math:    "admech-math",
 	rank.LCR:     "admech-long",
 	rank.Finance: "admech-finance",
+	rank.Code:    "admech-code",
 }
 
 const TopN = 3
@@ -124,7 +125,7 @@ func (c *Client) current(ctx context.Context, slug string) (*version, error) {
 	if err != nil {
 		return nil, fmt.Errorf("GET preset %s: %w", slug, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }() // read-only: a close error is not actionable
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	switch {
 	case resp.StatusCode == http.StatusNotFound:
@@ -159,7 +160,7 @@ func (c *Client) post(ctx context.Context, slug string, models []string) error {
 	if err != nil {
 		return fmt.Errorf("POST preset %s: %w", slug, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }() // read-only: a close error is not actionable
 	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("POST preset %s: status %d: %.300s", slug, resp.StatusCode, respBody)

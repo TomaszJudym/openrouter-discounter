@@ -47,7 +47,7 @@ func Send(ctx context.Context, hc *http.Client, token, chatID, text string) erro
 	if err != nil {
 		return redact(err, token)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }() // read-only: a close error is not actionable
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBodyBytes))
 	if err != nil {
 		return redact(fmt.Errorf("read response: %w", err), token)

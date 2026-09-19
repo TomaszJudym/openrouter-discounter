@@ -12,7 +12,7 @@ import (
 
 const aaPayload = `{"status":200,"data":[
  {"id":"1","name":"Model A","slug":"model-a","model_creator":{"slug":"vendor-a"},
-  "evaluations":{"artificial_analysis_math_index":68.25,"lcr":0.8533,"tau_banking":0.4722}},
+  "evaluations":{"artificial_analysis_math_index":68.25,"lcr":0.8533,"tau_banking":0.4722,"artificial_analysis_coding_index":71.4}},
  {"id":"2","name":"Model B","slug":"model-b","model_creator":{"slug":"vendor-b"},
   "evaluations":{"artificial_analysis_math_index":55.0}},
  {"id":"3","name":"Unrelated Model","slug":"other-model","model_creator":{"slug":"vendor-c"},
@@ -47,6 +47,12 @@ func TestScoresMatchesOpenRouterIDs(t *testing.T) {
 	}
 	if got := scores[rank.Finance]["vendor-a/model.a"]; !approx(got, 47.22) {
 		t.Errorf("Finance[model.a] = %v, want 47.22", got)
+	}
+	if got := scores[rank.Code]["vendor-a/model.a"]; got != 71.4 {
+		t.Errorf("Code[model.a] = %v, want 71.4", got)
+	}
+	if _, ok := scores[rank.Code]["vendor-b/model-b"]; ok {
+		t.Error("Code[model-b] present, want absent")
 	}
 	if _, ok := scores[rank.Math]["vendor-b/model-b"]; !ok {
 		t.Error("Math[model-b] missing, want 55.0")

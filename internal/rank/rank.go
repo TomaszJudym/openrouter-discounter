@@ -59,9 +59,9 @@ type SectorResult struct {
 }
 
 // scoreWeight is the share of the AA benchmark in the composite ranking
-// score; the remainder weights the discount (−Δ%). Both terms are 0-100, so
-// 0.5 means performance and price count equally.
-const scoreWeight = 0.5
+// score; the remainder (0.35) weights the discount (−Δ%). Both terms are
+// 0-100, so 0.65 means the benchmark counts ~2× the price.
+const scoreWeight = 0.65
 
 // Result is the full ranking. A non-empty GlobalErr marks every sector as
 // price-only and is surfaced once at the top of the message.

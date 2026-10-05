@@ -6,6 +6,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log"
 	"net/http"
 	"os"
@@ -29,7 +30,7 @@ func run() error {
 	token := os.Getenv("TELEGRAM_BOT_TOKEN")
 	chatID := os.Getenv("TELEGRAM_CHANNEL_ID")
 	if token == "" || chatID == "" {
-		log.Fatal("TELEGRAM_BOT_TOKEN and TELEGRAM_CHANNEL_ID are required")
+		return errors.New("TELEGRAM_BOT_TOKEN and TELEGRAM_CHANNEL_ID are required")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -50,22 +51,16 @@ func run() error {
 	for i, m := range models {
 		ids[i] = m.ID
 	}
-	prov := aa.New(hc, os.Getenv("AA_API_KEY"), ids)
-	res := rank.Rank(ctx, discs, free, prov)
-	expensiveLong := rank.SelectExpensiveLong(models, discs)
-
+	res := rank.Rank(ctx, discs, free, aa.New(hc, os.Getenv("AA_API_KEY"), ids))
 	if len(discs) == 0 {
-		if err := deliver(ctx, hc, token, chatID, format.NoDiscounts(free, now)); err != nil {
+		return telegram.Send(ctx, hc, token, chatID, format.NoDiscounts(free, now))
+	}
+	for _, msg := range format.Messages(res, free, now) {
+		if err := telegram.Send(ctx, hc, token, chatID, msg); err != nil {
 			return err
 		}
-	} else {
-		for _, msg := range format.Messages(res, free, now) {
-			if err := deliver(ctx, hc, token, chatID, msg); err != nil {
-				return err
-			}
-		}
 	}
-	updatePresets(ctx, hc, res, expensiveLong)
+	updatePresets(ctx, hc, append(res.Sectors, rank.SelectExpensiveLong(models, discs)))
 	return nil
 }
 
@@ -73,28 +68,22 @@ func run() error {
 // admech-* presets follow the discounted rankings; expensive-long follows
 // the strongest thinking frontier with discount-resorted order. Failures
 // are logged and non-fatal: the Telegram report is the primary output.
-func updatePresets(ctx context.Context, hc *http.Client, res rank.Result, extra ...rank.SectorResult) {
+func updatePresets(ctx context.Context, hc *http.Client, sectors []rank.SectorResult) {
 	key := os.Getenv("OPENROUTER_API_KEY")
 	if key == "" {
 		log.Printf("OPENROUTER_API_KEY not set; presets not updated")
 		return
 	}
 	pc := preset.New(hc, key)
-	for _, sr := range append(res.Sectors, extra...) {
+	for _, sr := range sectors {
+		slug := preset.Slugs[sr.Sector]
 		updated, err := pc.Update(ctx, sr)
 		if err != nil {
-			log.Printf("preset %s: %v", preset.Slugs[sr.Sector], err)
+			log.Printf("preset %s: %v", slug, err)
 			continue
 		}
 		if updated {
-			log.Printf("preset %s: new version with top-%d models", preset.Slugs[sr.Sector], preset.TopN)
+			log.Printf("preset %s: new version with top-%d models", slug, preset.TopN)
 		}
 	}
-}
-
-func deliver(ctx context.Context, hc *http.Client, token, chatID, msg string) error {
-	if err := telegram.Send(ctx, hc, token, chatID, msg); err != nil {
-		return err // token already redacted by the telegram package
-	}
-	return nil
 }

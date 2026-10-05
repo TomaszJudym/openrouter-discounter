@@ -37,8 +37,8 @@ func Send(ctx context.Context, hc *http.Client, token, chatID, text string) erro
 	if err != nil {
 		return fmt.Errorf("marshal request: %w", err)
 	}
-	url := fmt.Sprintf(apiFormat, token)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
+	apiURL := fmt.Sprintf(apiFormat, token)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL, bytes.NewReader(payload))
 	if err != nil {
 		return redact(fmt.Errorf("build request: %w", err), token)
 	}

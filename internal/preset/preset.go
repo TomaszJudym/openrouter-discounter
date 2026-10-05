@@ -33,14 +33,15 @@ const reasoningEffort = "max"
 
 // Slugs maps ranked sectors to the user's preset slugs.
 var Slugs = map[rank.Sector]string{
-	rank.Math:     "admech-math",
-	rank.LCR:      "admech-long",
-	rank.Finance:  "admech-finance",
-	rank.Code:         "admech-code",
-	rank.CodeFree:     "admech-code-free",
+	rank.Math:          "admech-math",
+	rank.LCR:           "admech-long",
+	rank.Finance:       "admech-finance",
+	rank.Code:          "admech-code",
+	rank.CodeFree:      "admech-code-free",
 	rank.ExpensiveLong: "expensive-long",
 }
 
+// TopN is how many models each preset routes.
 const TopN = 3
 
 type version struct {
@@ -62,17 +63,17 @@ type presetResponse struct {
 	} `json:"data"`
 }
 
-// Client updates presets with the OpenRouter API. A zero key disables
-// nothing here — callers skip the client entirely when no key is configured.
+// Client updates presets with the OpenRouter API key. Callers skip the
+// client entirely when no key is configured.
 type Client struct {
 	hc   *http.Client
 	key  string
-	Base string // overridable for tests
+	base string // overridable for tests
 }
 
 // New builds a client authenticating with the OpenRouter API key.
 func New(hc *http.Client, key string) *Client {
-	return &Client{hc: hc, key: key, Base: "https://openrouter.ai/api/v1"}
+	return &Client{hc: hc, key: key, base: "https://openrouter.ai/api/v1"}
 }
 
 // Update ensures the sector's preset lists the top-3 scored models with the
@@ -123,7 +124,7 @@ func sameVersion(v version, models []string) bool {
 }
 
 func (c *Client) current(ctx context.Context, slug string) (*version, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.Base+"/presets/"+slug, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.base+"/presets/"+slug, nil)
 	if err != nil {
 		return nil, fmt.Errorf("build request: %w", err)
 	}
@@ -158,7 +159,7 @@ func (c *Client) post(ctx context.Context, slug string, models []string) error {
 		return fmt.Errorf("marshal: %w", err)
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		c.Base+"/presets/"+slug+"/chat/completions", bytes.NewReader(body))
+		c.base+"/presets/"+slug+"/chat/completions", bytes.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("build request: %w", err)
 	}

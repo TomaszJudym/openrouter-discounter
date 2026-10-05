@@ -4,6 +4,7 @@ package aa
 
 import (
 	"context"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -12,13 +13,11 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"encoding/json/v2"
-
 	"github.com/tomaszjudym/openrouter-discounter/internal/rank"
 )
 
-// BaseURL is the Artificial Analysis data API endpoint.
-const BaseURL = "https://artificialanalysis.ai/api/v2/data/llms/models"
+// baseURL is the Artificial Analysis data API endpoint.
+const baseURL = "https://artificialanalysis.ai/api/v2/data/llms/models"
 
 const (
 	maxBodyBytes  = 16 << 20
@@ -27,14 +26,8 @@ const (
 	baseBackoff   = 2 * time.Second
 )
 
-// Sector field names in the AA evaluations object. Math and Coding Index
-// are already 0-100; LCR and tau_banking are 0-1 fractions reported as 0-100.
-const (
-	fieldMath = "artificial_analysis_math_index"
-	fieldLCR  = "lcr"
-	fieldBank = "tau_banking"
-	fracToPct = 100
-)
+// fracToPct scales 0-1 AA fractions to the 0-100 report scale.
+const fracToPct = 100
 
 type evaluations struct {
 	ArtificialAnalysisMathIndex float64 `json:"artificial_analysis_math_index"`
@@ -66,14 +59,14 @@ type Provider struct {
 	hc       *http.Client
 	key      string
 	ids      []string
-	BaseURL  string        // overridable for tests
-	Attempts int           // retry attempts; 0 = default
-	Backoff  time.Duration // first backoff step; 0 = default
+	baseURL  string
+	attempts int
+	backoff  time.Duration
 }
 
 // New builds a provider that matches AA scores to orIDs (OpenRouter ids).
 func New(hc *http.Client, key string, orIDs []string) *Provider {
-	return &Provider{hc: hc, key: key, ids: orIDs, BaseURL: BaseURL, Attempts: retryAttempts, Backoff: baseBackoff}
+	return &Provider{hc: hc, key: key, ids: orIDs, baseURL: baseURL, attempts: retryAttempts, backoff: baseBackoff}
 }
 
 // Scores implements rank.Provider. A fetch-level error is returned once for
@@ -85,7 +78,7 @@ func (p *Provider) Scores(ctx context.Context) (map[rank.Sector]map[string]float
 		return nil, errors.New(sanitize("AA_API_KEY not set", ""))
 	}
 	matches := p.matchTable()
-	body, err := p.get(ctx, p.BaseURL)
+	body, err := p.get(ctx, p.baseURL)
 	if err != nil {
 		return nil, err // already sanitized
 	}
@@ -129,12 +122,12 @@ func (p *Provider) Scores(ctx context.Context) (map[rank.Sector]map[string]float
 }
 
 // get fetches the endpoint with bounded retries on transient failures.
-func (p *Provider) get(ctx context.Context, url string) ([]byte, error) {
-	attempts := p.Attempts
+func (p *Provider) get(ctx context.Context, target string) ([]byte, error) {
+	attempts := p.attempts
 	if attempts <= 0 {
 		attempts = retryAttempts
 	}
-	backoff := p.Backoff
+	backoff := p.backoff
 	if backoff <= 0 {
 		backoff = baseBackoff
 	}
@@ -148,14 +141,14 @@ func (p *Provider) get(ctx context.Context, url string) ([]byte, error) {
 				backoff *= 2
 			}
 		}
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
 		if err != nil {
 			return nil, errors.New(sanitize("build request: "+err.Error(), p.key))
 		}
 		req.Header.Set("x-api-key", p.key)
 		resp, err := p.hc.Do(req)
 		if err != nil {
-			lastErr = fmt.Errorf("GET %s: %w", url, err)
+			lastErr = fmt.Errorf("GET %s: %w", target, err)
 			continue
 		}
 		body, readErr := io.ReadAll(io.LimitReader(resp.Body, maxBodyBytes))

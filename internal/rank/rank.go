@@ -16,9 +16,9 @@ type Sector string
 
 // The ranked sectors, in report order.
 const (
-	Math     Sector = "math"
-	LCR      Sector = "long-context-reasoning"
-	Finance  Sector = "finance"
+	Math          Sector = "math"
+	LCR           Sector = "long-context-reasoning"
+	Finance       Sector = "finance"
 	Code          Sector = "code"
 	CodeFree      Sector = "code-free"
 	ExpensiveLong Sector = "expensive-long"
@@ -46,50 +46,10 @@ func (s Sector) Label() string {
 // Sectors lists the ranked sectors in report order.
 var Sectors = []Sector{Math, LCR, Finance, Code, CodeFree}
 
-// ExpensiveLong picks the 3 strongest thinking-capable frontier models from
-// the catalog (highest AA Intelligence Index, non-free, non-batch, with
-// reasoning support). If any of the 3 has an active discount, the rows are
-// re-sorted with the most discounted first; the remaining rows keep their
-// strength order after the discounted ones.
-func SelectExpensiveLong(models []discounts.Model, discs []discounts.Discount) SectorResult {
-	cands := make([]Row, 0, 8)
-	for _, m := range models {
-		if strings.HasSuffix(m.ID, ":free") || strings.HasSuffix(m.ID, ":batch") {
-			continue
-		}
-		ii := m.Benchmarks.ArtificialAnalysis.IntelligenceIndex
-		if ii <= 0 || !m.Thinking() {
-			continue
-		}
-		cands = append(cands, Row{ModelID: m.ID, Score: ii, Scored: true})
-	}
-	slices.SortStableFunc(cands, func(a, b Row) int { return cmp.Compare(b.Score, a.Score) })
-	if len(cands) > 3 {
-		cands = cands[:3]
-	}
-	if len(cands) == 0 {
-		return SectorResult{Sector: ExpensiveLong}
-	}
-	pct := make(map[string]float64, len(discs))
-	for _, d := range discs {
-		pct[d.ModelID] = d.Pct
-	}
-	resorted := make([]Row, 0, len(cands))
-	for _, r := range cands {
-		if p, ok := pct[r.ModelID]; ok {
-			r.Pct = p
-			resorted = append(resorted, r)
-		}
-	}
-	slices.SortStableFunc(resorted, func(a, b Row) int { return cmp.Compare(a.Pct, b.Pct) })
-	rest := make([]Row, 0, len(cands)-len(resorted))
-	for _, r := range cands {
-		if _, ok := pct[r.ModelID]; !ok {
-			rest = append(rest, r)
-		}
-	}
-	return SectorResult{Sector: ExpensiveLong, Rows: append(resorted, rest...)}
-}
+// scoreWeight is the share of the AA benchmark in the composite ranking
+// score; the remainder weights the discount (−Δ%). Both terms are 0-100, so
+// 0.65 means the benchmark counts ~2× the price.
+const scoreWeight = 0.65
 
 // Row is one ranked model. Price and Was are USD per Mtok; Pct is negative
 // for a discount. Score is the sector benchmark value (0-100) when Scored.
@@ -110,18 +70,6 @@ type SectorResult struct {
 	Err    string
 }
 
-// scoreWeight is the share of the AA benchmark in the composite ranking
-// score; the remainder (0.35) weights the discount (−Δ%). Both terms are
-// 0-100, so 0.65 means the benchmark counts ~2× the price.
-const scoreWeight = 0.65
-
-// Result is the full ranking. A non-empty GlobalErr marks every sector as
-// price-only and is surfaced once at the top of the message.
-type Result struct {
-	Sectors   []SectorResult
-	GlobalErr string
-}
-
 // Provider supplies per-sector benchmark scores keyed by OpenRouter model
 // id. Errors returned must already be sanitized for display. Implementations
 // may fetch lazily; Scores is called once per run.
@@ -133,6 +81,58 @@ type Provider interface {
 // no usable scores. It contains no secrets.
 const noScoresMessage = "no scores returned for this sector"
 
+// Result is the full ranking. A non-empty GlobalErr marks every sector as
+// price-only and is surfaced once at the top of the message.
+type Result struct {
+	Sectors   []SectorResult
+	GlobalErr string
+}
+
+// SelectExpensiveLong picks the 3 strongest thinking-capable frontier models
+// from the catalog (highest AA Intelligence Index, non-free, non-batch, with
+// reasoning support). Discounted rows lead, deepest discount first; the rest
+// keep their strength order.
+func SelectExpensiveLong(models []discounts.Model, discs []discounts.Discount) SectorResult {
+	cands := make([]Row, 0, 8)
+	for _, m := range models {
+		if strings.HasSuffix(m.ID, ":free") || strings.HasSuffix(m.ID, ":batch") {
+			continue
+		}
+		ii := m.Benchmarks.ArtificialAnalysis.IntelligenceIndex
+		if ii <= 0 || !m.Thinking() {
+			continue
+		}
+		cands = append(cands, Row{ModelID: m.ID, Score: ii, Scored: true})
+	}
+	if len(cands) == 0 {
+		return SectorResult{Sector: ExpensiveLong}
+	}
+	slices.SortStableFunc(cands, byScoreDesc)
+	if len(cands) > 3 {
+		cands = cands[:3]
+	}
+	pct := make(map[string]float64, len(discs))
+	for _, d := range discs {
+		pct[d.ModelID] = d.Pct
+	}
+	// one stable sort: discounted rows first by depth, ties keep strength order
+	slices.SortStableFunc(cands, func(a, b Row) int {
+		pa, aOk := pct[a.ModelID]
+		pb, bOk := pct[b.ModelID]
+		switch {
+		case aOk != bOk:
+			if aOk {
+				return -1
+			}
+			return 1
+		case aOk:
+			return cmp.Compare(pa, pb)
+		}
+		return 0
+	})
+	return SectorResult{Sector: ExpensiveLong, Rows: cands}
+}
+
 // Rank builds the per-sector top-10 rankings. With scores available, scored
 // models rank by score descending, then by discount magnitude; unscored
 // models rank after scored ones by discount magnitude with score n/a.
@@ -143,41 +143,29 @@ const noScoresMessage = "no scores returned for this sector"
 // only; price columns are omitted. When scores are unavailable the sector
 // lists free models alphabetically with a notice.
 func Rank(ctx context.Context, discs []discounts.Discount, freeIDs []string, prov Provider) Result {
-	res := Result{}
 	scores, err := prov.Scores(ctx)
-	if err != nil {
-		res.GlobalErr = err.Error()
-	}
+	res := Result{GlobalErr: errString(err)}
 	for _, sec := range Sectors {
-		sr := SectorResult{Sector: sec}
 		if sec == CodeFree {
-			sr = codeFreeResult(sec, freeIDs, scores, err)
+			res.Sectors = append(res.Sectors, codeFreeResult(freeIDs, scores, err))
 		} else {
-			sr = sectorResult(sec, discs, scores, err)
+			res.Sectors = append(res.Sectors, sectorResult(sec, discs, scores, err))
 		}
-		res.Sectors = append(res.Sectors, sr)
 	}
 	return res
 }
 
 func sectorResult(sec Sector, discs []discounts.Discount, scores map[Sector]map[string]float64, globalErr error) SectorResult {
 	sr := SectorResult{Sector: sec}
-	var secScores map[string]float64
-	switch {
-	case globalErr != nil:
-	default:
-		secScores = scores[sec]
-		if len(secScores) == 0 {
-			sr.Err = noScoresMessage
-		}
+	secScores := scores[sec]
+	if globalErr == nil && len(secScores) == 0 {
+		sr.Err = noScoresMessage
 	}
 	rows := make([]Row, 0, len(discs))
 	for _, d := range discs {
 		row := Row{ModelID: d.ModelID, Price: d.Price, Was: d.Was, Pct: d.Pct}
-		if secScores != nil {
-			if s, ok := secScores[d.ModelID]; ok {
-				row.Score, row.Scored = s, true
-			}
+		if s, ok := secScores[d.ModelID]; ok {
+			row.Score, row.Scored = s, true
 		}
 		rows = append(rows, row)
 	}
@@ -186,77 +174,81 @@ func sectorResult(sec Sector, discs []discounts.Discount, scores map[Sector]map[
 	return sr
 }
 
-func codeFreeResult(sec Sector, freeIDs []string, scores map[Sector]map[string]float64, globalErr error) SectorResult {
-	sr := SectorResult{Sector: sec}
-	var secScores map[string]float64
-	switch {
-	case globalErr != nil:
-	default:
-		if s, ok := scores[CodeFree]; ok {
-			secScores = s
-		}
-		if len(secScores) == 0 {
-			sr.Err = noScoresMessage
-		}
+func codeFreeResult(freeIDs []string, scores map[Sector]map[string]float64, globalErr error) SectorResult {
+	sr := SectorResult{Sector: CodeFree}
+	secScores := scores[CodeFree]
+	if globalErr == nil && len(secScores) == 0 {
+		sr.Err = noScoresMessage
 	}
 	rows := make([]Row, 0, len(freeIDs))
 	for _, id := range freeIDs {
 		row := Row{ModelID: id}
-		if secScores != nil {
-			if s, ok := secScores[id]; ok {
-				row.Score, row.Scored = s, true
-			}
+		if s, ok := secScores[id]; ok {
+			row.Score, row.Scored = s, true
 		}
 		rows = append(rows, row)
 	}
-	sortRowsFree(rows)
-	sr.Rows = top10(rows)
+	sr.Rows = top10(sortRowsFree(rows))
 	return sr
 }
 
-// sortRows orders scored models by the composite score (scoreWeight ×
-// benchmark + (1−scoreWeight) × discount) descending; unscored models rank
-// after scored ones by discount magnitude (Pct ascending).
+func errString(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
+}
+
+// sortRows orders scored models by composite descending; unscored models
+// rank after scored ones, by discount magnitude (Pct ascending).
 func sortRows(rows []Row, priceOnly bool) {
 	if priceOnly {
-		slices.SortStableFunc(rows, func(a, b Row) int { return cmp.Compare(a.Pct, b.Pct) })
+		slices.SortStableFunc(rows, byPct)
 		return
 	}
 	slices.SortStableFunc(rows, func(a, b Row) int {
-		if a.Scored != b.Scored {
-			if b.Scored {
-				return 1
+		switch {
+		case a.Scored != b.Scored:
+			if a.Scored {
+				return -1
 			}
-			return -1
-		}
-		if a.Scored {
-			if c := cmp.Compare(final(b), final(a)); c != 0 {
+			return 1
+		case a.Scored:
+			if c := cmp.Compare(composite(b), composite(a)); c != 0 {
 				return c
 			}
 		}
-		return cmp.Compare(a.Pct, b.Pct)
+		return byPct(a, b)
 	})
 }
 
 // sortRowsFree orders free models: scored by benchmark descending, unscored
 // alphabetically after.
-func sortRowsFree(rows []Row) {
+func sortRowsFree(rows []Row) []Row {
 	slices.SortStableFunc(rows, func(a, b Row) int {
-		if a.Scored != b.Scored {
-			if b.Scored {
-				return 1
+		switch {
+		case a.Scored != b.Scored:
+			if a.Scored {
+				return -1
 			}
-			return -1
-		}
-		if a.Scored {
-			return cmp.Compare(b.Score, a.Score)
+			return 1
+		case a.Scored:
+			return byScoreDesc(a, b)
 		}
 		return cmp.Compare(a.ModelID, b.ModelID)
 	})
+	return rows
 }
 
-// final is the composite 0-100 ranking value for a scored row.
-func final(r Row) float64 {
+// byScoreDesc orders rows by benchmark score, highest first.
+func byScoreDesc(a, b Row) int { return cmp.Compare(b.Score, a.Score) }
+
+// byPct orders rows by discount magnitude, deepest discount first.
+func byPct(a, b Row) int { return cmp.Compare(a.Pct, b.Pct) }
+
+// composite is the 0-100 ranking value for a scored row: benchmark weighted
+// by scoreWeight, the remainder discount.
+func composite(r Row) float64 {
 	return scoreWeight*r.Score + (1-scoreWeight)*(-r.Pct)
 }
 

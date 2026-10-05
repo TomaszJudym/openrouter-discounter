@@ -46,20 +46,20 @@ const (
 	workers      = 8
 )
 
-// Pricing is a model's base pricing. Prompt and Completion are decimal USD
-// per token.
+// Pricing is a model's base pricing. Prompt is decimal USD per token.
 type Pricing struct {
-	Prompt     string     `json:"prompt"`
-	Completion string     `json:"completion"`
-	Overrides  []Override `json:"overrides"`
+	Prompt    string     `json:"prompt"`
+	Overrides []Override `json:"overrides"`
 }
 
+// Benchmarks holds the catalog's third-party benchmark scores.
 type Benchmarks struct {
 	ArtificialAnalysis struct {
 		IntelligenceIndex float64 `json:"intelligence_index"`
 	} `json:"artificial_analysis"`
 }
 
+// Reasoning is the catalog's reasoning-capability marker.
 type Reasoning struct {
 	Mandatory bool `json:"mandatory"`
 }
@@ -73,21 +73,16 @@ func (m Model) Thinking() bool {
 	return slices.Contains(m.SupportedParameters, "reasoning")
 }
 
-// Override is one tiered-pricing entry.
+// Override is one tiered-pricing entry; only entries with a utc_days window
+// are time-limited discounts — volume and context tiers carry none.
 type Override struct {
-	Days         []string `json:"utc_days"`          // UTC weekdays the tier applies
-	StartTok     float64  `json:"utc_start"`         // bucket start in Ktok; 0 = from zero
-	EndTok       float64  `json:"utc_end"`           // bucket end in Ktok; 0 = open-ended
-	MinPromptTok float64  `json:"min_prompt_tokens"` // volume tier bound; no time window
-	Prompt       string   `json:"prompt"`
-	Completion   string   `json:"completion"`
+	Days   []string `json:"utc_days"` // UTC weekdays the tier applies
+	Prompt string   `json:"prompt"`
 }
 
 // Model is one catalog entry.
 type Model struct {
 	ID                  string     `json:"id"`
-	Name                string     `json:"name"`
-	Context             int        `json:"context_length"`
 	Pricing             *Pricing   `json:"pricing"`
 	Benchmarks          Benchmarks `json:"benchmarks"`
 	Reasoning           *Reasoning `json:"reasoning"`
@@ -100,10 +95,9 @@ type response struct {
 
 // Endpoint is one provider's pricing for a model.
 type Endpoint struct {
-	Provider   string
-	Prompt     string
-	Completion string
-	Discount   float64 // fraction; 0 = none
+	Provider string
+	Prompt   string
+	Discount float64 // fraction; 0 = none
 }
 
 type endpointsResponse struct {
@@ -246,10 +240,9 @@ func fetchEndpoints(ctx context.Context, hc *http.Client, id string) ([]Endpoint
 			eps := make([]Endpoint, 0, len(r.Data.Endpoints))
 			for _, e := range r.Data.Endpoints {
 				eps = append(eps, Endpoint{
-					Provider:   e.ProviderName,
-					Prompt:     e.Pricing.Prompt,
-					Completion: e.Pricing.Completion,
-					Discount:   e.Pricing.Discount,
+					Provider: e.ProviderName,
+					Prompt:   e.Pricing.Prompt,
+					Discount: e.Pricing.Discount,
 				})
 			}
 			return eps, nil

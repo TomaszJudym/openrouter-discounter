@@ -2,7 +2,9 @@ package discounts
 
 import (
 	"encoding/json/v2"
+	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -233,7 +235,7 @@ func TestFetchBadStatus(t *testing.T) {
 type errTransport struct{}
 
 func (errTransport) RoundTrip(*http.Request) (*http.Response, error) {
-	return nil, fmt.Errorf("connection refused")
+	return nil, errors.New("connection refused")
 }
 
 func TestDayMatchingAcrossCase(t *testing.T) {
@@ -242,11 +244,4 @@ func TestDayMatchingAcrossCase(t *testing.T) {
 	}
 }
 
-func floatEq(a, b float64) bool { return absF(a-b) < 1e-9 }
-
-func absF(f float64) float64 {
-	if f < 0 {
-		return -f
-	}
-	return f
-}
+func floatEq(a, b float64) bool { return math.Abs(a-b) < 1e-9 }

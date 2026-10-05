@@ -6,6 +6,8 @@ package format
 
 import (
 	"fmt"
+	"slices"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -29,13 +31,13 @@ const (
 var htmlEscaper = strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;")
 
 // jst is Japan Standard Time; JST has no DST so a fixed zone is exact.
-func jst() *time.Location { return time.FixedZone("JST", 9*3600) }
+var jst = time.FixedZone("JST", 9*3600)
 
 // Messages renders one HTML message for the ranking, or one per sector when
 // the combined message would exceed the per-message limit. The free-tier
 // block rides the last message when it fits, its own message otherwise.
 func Messages(res rank.Result, free []string, now time.Time) []string {
-	header := "🪙 OpenRouter discounts — " + now.In(jst()).Format(headerTimeLayout)
+	header := "🪙 OpenRouter discounts — " + now.In(jst).Format(headerTimeLayout)
 	start := func(b *strings.Builder) {
 		b.WriteString(header)
 		if res.GlobalErr != "" {
@@ -70,7 +72,7 @@ func Messages(res rank.Result, free []string, now time.Time) []string {
 // NoDiscounts renders the short message for a day with no active discounts.
 func NoDiscounts(free []string, now time.Time) string {
 	var b strings.Builder
-	b.WriteString("🪙 OpenRouter discounts — " + now.In(jst()).Format(headerTimeLayout))
+	b.WriteString("🪙 OpenRouter discounts — " + now.In(jst).Format(headerTimeLayout))
 	b.WriteString("\n\nno discounts today.")
 	if block := freeTierBlock(free); block != "" {
 		b.WriteString("\n\n" + block)
@@ -98,90 +100,75 @@ func notice(errText string) string {
 	return noticePrefix + htmlEscaper.Replace(errText)
 }
 
+// cell is one fixed-width column of a table line.
+type cell struct {
+	text  string
+	width int
+	right bool
+}
+
+// line renders cells separated by one space, trimming trailing padding.
+func line(cells ...cell) string {
+	parts := make([]string, len(cells))
+	for i, c := range cells {
+		parts[i] = pad(c.text, c.width, c.right)
+	}
+	return strings.TrimRight(strings.Join(parts, " "), " ")
+}
+
 // table renders the fixed-width ranking inside <pre>. The score column is
-// omitted entirely when no row has a score. CodeFree sectors omit price
-// columns.
+// omitted when no row is scored; CodeFree omits the price columns.
 func table(sr rank.SectorResult) string {
-	if sr.Sector == rank.CodeFree {
-		return codeFreeTable(sr)
+	withPrice := sr.Sector != rank.CodeFree
+	withScore := slices.ContainsFunc(sr.Rows, func(r rank.Row) bool { return r.Scored })
+	var b strings.Builder
+	hdr := []cell{
+		{text: "#", width: 2},
+		{text: "model", width: widthModel},
 	}
-	scored := false
-	for _, r := range sr.Rows {
-		if r.Scored {
-			scored = true
-			break
-		}
+	if withPrice {
+		hdr = append(hdr,
+			cell{text: "was→now", width: widthPair, right: true},
+			cell{text: "Δ%", width: widthPct, right: true})
 	}
-	var rows []string
-	if scored {
-		rows = append(rows, tableRow("#", "model", "was→now", "Δ%", "score"))
-	} else {
-		rows = append(rows, tableRow("#", "model", "was→now", "Δ%", ""))
+	if withScore {
+		hdr = append(hdr, cell{text: "score", width: widthScore, right: true})
 	}
+	b.WriteString(line(hdr...))
+	b.WriteByte('\n')
 	for i, r := range sr.Rows {
-		pair := fmt.Sprintf("%.2f→%.2f", r.Was, r.Price)
-		pct := fmt.Sprintf("%.0f", r.Pct)
-		model := htmlEscaper.Replace(truncateRunes(r.ModelID, widthModel))
-		var line string
-		if scored {
+		cells := []cell{
+			{text: strconv.Itoa(i + 1), width: 2},
+			{text: htmlEscaper.Replace(truncateRunes(r.ModelID, widthModel)), width: widthModel},
+		}
+		if withPrice {
+			cells = append(cells,
+				cell{text: fmt.Sprintf("%.2f→%.2f", r.Was, r.Price), width: widthPair, right: true},
+				cell{text: fmt.Sprintf("%.0f", r.Pct), width: widthPct, right: true})
+		}
+		if withScore {
 			score := "n/a"
 			if r.Scored {
 				score = fmt.Sprintf("%.1f", r.Score)
 			}
-			line = tableRow(fmt.Sprint(i+1), model, pair, pct, score)
-		} else {
-			line = tableRow(fmt.Sprint(i+1), model, pair, pct, "")
+			cells = append(cells, cell{text: score, width: widthScore, right: true})
 		}
-		rows = append(rows, line)
+		b.WriteString(line(cells...))
+		b.WriteByte('\n')
 	}
-	return strings.Join(rows, "\n") + "\n"
+	return b.String()
 }
 
-func codeFreeTable(sr rank.SectorResult) string {
-	scored := false
-	for _, r := range sr.Rows {
-		if r.Scored {
-			scored = true
-			break
-		}
+func truncateRunes(s string, width int) string {
+	if utf8.RuneCountInString(s) <= width {
+		return s
 	}
-	var rows []string
-	if scored {
-		rows = append(rows, tableRow("#", "model", "", "", "score"))
-	} else {
-		rows = append(rows, tableRow("#", "model", "", "", ""))
-	}
-	for i, r := range sr.Rows {
-		model := htmlEscaper.Replace(truncateRunes(r.ModelID, widthModel))
-		if scored {
-			score := "n/a"
-			if r.Scored {
-				score = fmt.Sprintf("%.1f", r.Score)
-			}
-			rows = append(rows, tableRow(fmt.Sprint(i+1), model, "", "", score))
-		} else {
-			rows = append(rows, tableRow(fmt.Sprint(i+1), model, "", "", ""))
-		}
-	}
-	return strings.Join(rows, "\n") + "\n"
+	r := []rune(s)
+	r = append(r[:width-1], '…')
+	return string(r)
 }
 
-// tableRow joins fixed-width columns; the score column is dropped when empty.
-func tableRow(rankCol, modelCol, pairCol, pctCol, scoreCol string) string {
-	cells := []string{
-		padRight(rankCol, 2, false),
-		padRight(modelCol, widthModel, false),
-		padRight(pairCol, widthPair, true),
-		padRight(pctCol, widthPct, true),
-	}
-	if scoreCol != "" {
-		cells = append(cells, padRight(scoreCol, widthScore, true))
-	}
-	return strings.TrimRight(strings.Join(cells, " "), " ")
-}
-
-// padRight pads a rune-counted column; truncation happens at the call site.
-func padRight(s string, width int, right bool) string {
+func pad(s string, width int, right bool) string {
 	n := width - utf8.RuneCountInString(s)
 	if n <= 0 {
 		return s
@@ -190,16 +177,6 @@ func padRight(s string, width int, right bool) string {
 		return strings.Repeat(" ", n) + s
 	}
 	return s + strings.Repeat(" ", n)
-}
-
-// truncateRunes cuts s to width runes, marking the cut with an ellipsis.
-func truncateRunes(s string, width int) string {
-	if utf8.RuneCountInString(s) <= width {
-		return s
-	}
-	r := []rune(s)
-	r = append(r[:width-1], '…')
-	return string(r)
 }
 
 func freeTierBlock(free []string) string {

@@ -2,6 +2,7 @@ package rank
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/tomaszjudym/openrouter-discounter/internal/discounts"
@@ -50,7 +51,7 @@ func TestRankScoredOrderingAndUnscoredLast(t *testing.T) {
 }
 
 func TestRankPriceOnlyFallbackOnProviderError(t *testing.T) {
-	p := fakeProvider{err: errText("429 rate limit, retries exhausted")}
+	p := fakeProvider{err: errors.New("429 rate limit, retries exhausted")}
 	res := Rank(t.Context(), discs(), nil, p)
 	if res.GlobalErr != "429 rate limit, retries exhausted" {
 		t.Fatalf("GlobalErr = %q, want the provider error", res.GlobalErr)
@@ -179,7 +180,7 @@ func TestCodeFreeTopTenCap(t *testing.T) {
 }
 
 func TestCodeFreeGlobalError(t *testing.T) {
-	p := fakeProvider{err: errText("AA down")}
+	p := fakeProvider{err: errors.New("AA down")}
 	res := Rank(t.Context(), nil, []string{"a/b:free"}, p)
 	cf := res.Sectors[4]
 	if cf.Err != "" {
@@ -190,6 +191,34 @@ func TestCodeFreeGlobalError(t *testing.T) {
 	}
 }
 
-type errText string
+func thinkingModel(id string, intelligenceIndex float64) discounts.Model {
+	m := discounts.Model{ID: id, Reasoning: &discounts.Reasoning{}}
+	m.Benchmarks.ArtificialAnalysis.IntelligenceIndex = intelligenceIndex
+	return m
+}
 
-func (e errText) Error() string { return string(e) }
+func TestSelectExpensiveLongOrder(t *testing.T) {
+	models := []discounts.Model{
+		thinkingModel("a/weak", 50),
+		thinkingModel("b/strong", 90),
+		thinkingModel("c/mid", 70),
+		thinkingModel("d/free:free", 99),
+	}
+	got := SelectExpensiveLong(models, nil)
+	if ids := idsOf(got.Rows); len(ids) != 3 || ids[0] != "b/strong" || ids[1] != "c/mid" || ids[2] != "a/weak" {
+		t.Errorf("no-discount order = %v, want strength order [b, c, a]", ids)
+	}
+	discs := []discounts.Discount{{ModelID: "a/weak", Pct: -50}, {ModelID: "b/strong", Pct: -10}}
+	got = SelectExpensiveLong(models, discs)
+	if ids := idsOf(got.Rows); ids[0] != "a/weak" || ids[1] != "b/strong" || ids[2] != "c/mid" {
+		t.Errorf("discount order = %v, want deepest discount first [a, b, c]", ids)
+	}
+}
+
+func idsOf(rows []Row) []string {
+	out := make([]string, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, r.ModelID)
+	}
+	return out
+}

@@ -54,7 +54,7 @@ func serverFor(t *testing.T, rec *recorder, current *presetResponse, getStatus i
 	})
 	srv := httptest.NewTestServer(t, mux)
 	_ = srv.Client()
-	return &Client{hc: srv.Client(), key: "test-or-key", Base: srv.URL + "/api/v1"}
+	return &Client{hc: srv.Client(), key: "test-or-key", base: srv.URL + "/api/v1"}
 }
 
 func mustJSON(v any) string {

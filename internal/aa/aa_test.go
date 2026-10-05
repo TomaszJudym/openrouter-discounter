@@ -2,6 +2,7 @@ package aa
 
 import (
 	"encoding/json/v2"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -26,8 +27,8 @@ func providerFor(t *testing.T, body string, status int, orIDs []string) (*Provid
 		_, _ = w.Write([]byte(body))
 	}))
 	p := New(srv.Client(), "test-key", orIDs)
-	p.BaseURL = srv.URL
-	p.Attempts = 1
+	p.baseURL = srv.URL
+	p.attempts = 1
 	return p, srv
 }
 
@@ -142,11 +143,4 @@ func TestResponseDecode(t *testing.T) {
 	}
 }
 
-func approx(a, b float64) bool { return abs(a-b) < 1e-9 }
-
-func abs(f float64) float64 {
-	if f < 0 {
-		return -f
-	}
-	return f
-}
+func approx(a, b float64) bool { return math.Abs(a-b) < 1e-9 }

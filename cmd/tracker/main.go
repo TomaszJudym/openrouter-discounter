@@ -52,6 +52,7 @@ func run() error {
 	}
 	prov := aa.New(hc, os.Getenv("AA_API_KEY"), ids)
 	res := rank.Rank(ctx, discs, free, prov)
+	expensiveLong := rank.SelectExpensiveLong(models, discs)
 
 	if len(discs) == 0 {
 		if err := deliver(ctx, hc, token, chatID, format.NoDiscounts(free, now)); err != nil {
@@ -64,21 +65,22 @@ func run() error {
 			}
 		}
 	}
-	updatePresets(ctx, hc, res)
+	updatePresets(ctx, hc, res, expensiveLong)
 	return nil
 }
 
-// updatePresets points the admech-* presets at each category's top 3 scored
-// models. Failures are logged and non-fatal: the Telegram report is the
-// primary output.
-func updatePresets(ctx context.Context, hc *http.Client, res rank.Result) {
+// updatePresets points each category's preset at its top 3 models: the
+// admech-* presets follow the discounted rankings; expensive-long follows
+// the strongest thinking frontier with discount-resorted order. Failures
+// are logged and non-fatal: the Telegram report is the primary output.
+func updatePresets(ctx context.Context, hc *http.Client, res rank.Result, extra ...rank.SectorResult) {
 	key := os.Getenv("OPENROUTER_API_KEY")
 	if key == "" {
 		log.Printf("OPENROUTER_API_KEY not set; presets not updated")
 		return
 	}
 	pc := preset.New(hc, key)
-	for _, sr := range res.Sectors {
+	for _, sr := range append(res.Sectors, extra...) {
 		updated, err := pc.Update(ctx, sr)
 		if err != nil {
 			log.Printf("preset %s: %v", preset.Slugs[sr.Sector], err)

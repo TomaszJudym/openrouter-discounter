@@ -35,8 +35,9 @@ var Slugs = map[rank.Sector]string{
 	rank.Math:     "admech-math",
 	rank.LCR:      "admech-long",
 	rank.Finance:  "admech-finance",
-	rank.Code:     "admech-code",
-	rank.CodeFree: "admech-code-free",
+	rank.Code:         "admech-code",
+	rank.CodeFree:     "admech-code-free",
+	rank.ExpensiveLong: "expensive-long",
 }
 
 const TopN = 3

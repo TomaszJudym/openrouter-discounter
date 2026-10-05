@@ -54,6 +54,25 @@ type Pricing struct {
 	Overrides  []Override `json:"overrides"`
 }
 
+type Benchmarks struct {
+	ArtificialAnalysis struct {
+		IntelligenceIndex float64 `json:"intelligence_index"`
+	} `json:"artificial_analysis"`
+}
+
+type Reasoning struct {
+	Mandatory bool `json:"mandatory"`
+}
+
+// Thinking reports whether the model advertises reasoning support in the
+// catalog: a non-null reasoning object or the reasoning parameter.
+func (m Model) Thinking() bool {
+	if m.Reasoning != nil {
+		return true
+	}
+	return slices.Contains(m.SupportedParameters, "reasoning")
+}
+
 // Override is one tiered-pricing entry.
 type Override struct {
 	Days         []string `json:"utc_days"`          // UTC weekdays the tier applies
@@ -66,10 +85,13 @@ type Override struct {
 
 // Model is one catalog entry.
 type Model struct {
-	ID      string   `json:"id"`
-	Name    string   `json:"name"`
-	Context int      `json:"context_length"`
-	Pricing *Pricing `json:"pricing"`
+	ID                  string     `json:"id"`
+	Name                string     `json:"name"`
+	Context             int        `json:"context_length"`
+	Pricing             *Pricing   `json:"pricing"`
+	Benchmarks          Benchmarks `json:"benchmarks"`
+	Reasoning           *Reasoning `json:"reasoning"`
+	SupportedParameters []string   `json:"supported_parameters"`
 }
 
 type response struct {

@@ -6,6 +6,7 @@ import (
 	"cmp"
 	"context"
 	"slices"
+	"strings"
 
 	"github.com/tomaszjudym/openrouter-discounter/internal/discounts"
 )
@@ -18,8 +19,9 @@ const (
 	Math     Sector = "math"
 	LCR      Sector = "long-context-reasoning"
 	Finance  Sector = "finance"
-	Code     Sector = "code"
-	CodeFree Sector = "code-free"
+	Code          Sector = "code"
+	CodeFree      Sector = "code-free"
+	ExpensiveLong Sector = "expensive-long"
 )
 
 // Label is the display header for the sector.
@@ -35,12 +37,59 @@ func (s Sector) Label() string {
 		return "CODE — top 10 discounted (AA Coding Index)"
 	case CodeFree:
 		return "CODE-FREE — top 10 free coding models (AA Coding Index)"
+	case ExpensiveLong:
+		return "EXPENSIVE-LONG — top 3 strongest thinking frontier"
 	}
 	return string(s)
 }
 
 // Sectors lists the ranked sectors in report order.
 var Sectors = []Sector{Math, LCR, Finance, Code, CodeFree}
+
+// ExpensiveLong picks the 3 strongest thinking-capable frontier models from
+// the catalog (highest AA Intelligence Index, non-free, non-batch, with
+// reasoning support). If any of the 3 has an active discount, the rows are
+// re-sorted with the most discounted first; the remaining rows keep their
+// strength order after the discounted ones.
+func SelectExpensiveLong(models []discounts.Model, discs []discounts.Discount) SectorResult {
+	cands := make([]Row, 0, 8)
+	for _, m := range models {
+		if strings.HasSuffix(m.ID, ":free") || strings.HasSuffix(m.ID, ":batch") {
+			continue
+		}
+		ii := m.Benchmarks.ArtificialAnalysis.IntelligenceIndex
+		if ii <= 0 || !m.Thinking() {
+			continue
+		}
+		cands = append(cands, Row{ModelID: m.ID, Score: ii, Scored: true})
+	}
+	slices.SortStableFunc(cands, func(a, b Row) int { return cmp.Compare(b.Score, a.Score) })
+	if len(cands) > 3 {
+		cands = cands[:3]
+	}
+	if len(cands) == 0 {
+		return SectorResult{Sector: ExpensiveLong}
+	}
+	pct := make(map[string]float64, len(discs))
+	for _, d := range discs {
+		pct[d.ModelID] = d.Pct
+	}
+	resorted := make([]Row, 0, len(cands))
+	for _, r := range cands {
+		if p, ok := pct[r.ModelID]; ok {
+			r.Pct = p
+			resorted = append(resorted, r)
+		}
+	}
+	slices.SortStableFunc(resorted, func(a, b Row) int { return cmp.Compare(a.Pct, b.Pct) })
+	rest := make([]Row, 0, len(cands)-len(resorted))
+	for _, r := range cands {
+		if _, ok := pct[r.ModelID]; !ok {
+			rest = append(rest, r)
+		}
+	}
+	return SectorResult{Sector: ExpensiveLong, Rows: append(resorted, rest...)}
+}
 
 // Row is one ranked model. Price and Was are USD per Mtok; Pct is negative
 // for a discount. Score is the sector benchmark value (0-100) when Scored.

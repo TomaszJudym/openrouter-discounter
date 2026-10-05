@@ -32,10 +32,11 @@ const verbosity = "low"
 
 // Slugs maps ranked sectors to the user's preset slugs.
 var Slugs = map[rank.Sector]string{
-	rank.Math:    "admech-math",
-	rank.LCR:     "admech-long",
-	rank.Finance: "admech-finance",
-	rank.Code:    "admech-code",
+	rank.Math:     "admech-math",
+	rank.LCR:      "admech-long",
+	rank.Finance:  "admech-finance",
+	rank.Code:     "admech-code",
+	rank.CodeFree: "admech-code-free",
 }
 
 const TopN = 3

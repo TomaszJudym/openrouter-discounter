@@ -99,8 +99,12 @@ func notice(errText string) string {
 }
 
 // table renders the fixed-width ranking inside <pre>. The score column is
-// omitted entirely when no row has a score.
+// omitted entirely when no row has a score. CodeFree sectors omit price
+// columns.
 func table(sr rank.SectorResult) string {
+	if sr.Sector == rank.CodeFree {
+		return codeFreeTable(sr)
+	}
 	scored := false
 	for _, r := range sr.Rows {
 		if r.Scored {
@@ -129,6 +133,35 @@ func table(sr rank.SectorResult) string {
 			line = tableRow(fmt.Sprint(i+1), model, pair, pct, "")
 		}
 		rows = append(rows, line)
+	}
+	return strings.Join(rows, "\n") + "\n"
+}
+
+func codeFreeTable(sr rank.SectorResult) string {
+	scored := false
+	for _, r := range sr.Rows {
+		if r.Scored {
+			scored = true
+			break
+		}
+	}
+	var rows []string
+	if scored {
+		rows = append(rows, tableRow("#", "model", "", "", "score"))
+	} else {
+		rows = append(rows, tableRow("#", "model", "", "", ""))
+	}
+	for i, r := range sr.Rows {
+		model := htmlEscaper.Replace(truncateRunes(r.ModelID, widthModel))
+		if scored {
+			score := "n/a"
+			if r.Scored {
+				score = fmt.Sprintf("%.1f", r.Score)
+			}
+			rows = append(rows, tableRow(fmt.Sprint(i+1), model, "", "", score))
+		} else {
+			rows = append(rows, tableRow(fmt.Sprint(i+1), model, "", "", ""))
+		}
 	}
 	return strings.Join(rows, "\n") + "\n"
 }

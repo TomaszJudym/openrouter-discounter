@@ -15,10 +15,11 @@ type Sector string
 
 // The ranked sectors, in report order.
 const (
-	Math    Sector = "math"
-	LCR     Sector = "long-context-reasoning"
-	Finance Sector = "finance"
-	Code    Sector = "code"
+	Math     Sector = "math"
+	LCR      Sector = "long-context-reasoning"
+	Finance  Sector = "finance"
+	Code     Sector = "code"
+	CodeFree Sector = "code-free"
 )
 
 // Label is the display header for the sector.
@@ -32,12 +33,14 @@ func (s Sector) Label() string {
 		return "FINANCE — top 10 discounted (τ³-Banking)"
 	case Code:
 		return "CODE — top 10 discounted (AA Coding Index)"
+	case CodeFree:
+		return "CODE-FREE — top 10 free coding models (AA Coding Index)"
 	}
 	return string(s)
 }
 
 // Sectors lists the ranked sectors in report order.
-var Sectors = []Sector{Math, LCR, Finance, Code}
+var Sectors = []Sector{Math, LCR, Finance, Code, CodeFree}
 
 // Row is one ranked model. Price and Was are USD per Mtok; Pct is negative
 // for a discount. Score is the sector benchmark value (0-100) when Scored.
@@ -86,7 +89,11 @@ const noScoresMessage = "no scores returned for this sector"
 // models rank after scored ones by discount magnitude with score n/a.
 // Without scores for a sector (provider error, or no scores for that
 // sector), the sector ranks by discount magnitude only.
-func Rank(ctx context.Context, discs []discounts.Discount, prov Provider) Result {
+//
+// The CodeFree sector ranks free models (freeIDs) by AA Coding Index score
+// only; price columns are omitted. When scores are unavailable the sector
+// lists free models alphabetically with a notice.
+func Rank(ctx context.Context, discs []discounts.Discount, freeIDs []string, prov Provider) Result {
 	res := Result{}
 	scores, err := prov.Scores(ctx)
 	if err != nil {
@@ -94,31 +101,68 @@ func Rank(ctx context.Context, discs []discounts.Discount, prov Provider) Result
 	}
 	for _, sec := range Sectors {
 		sr := SectorResult{Sector: sec}
-		var secScores map[string]float64
-		switch {
-		case err != nil:
-			// global failure: price-only, notice at top of message
-		default:
-			secScores = scores[sec]
-			if len(secScores) == 0 {
-				sr.Err = noScoresMessage
-			}
+		if sec == CodeFree {
+			sr = codeFreeResult(sec, freeIDs, scores, err)
+		} else {
+			sr = sectorResult(sec, discs, scores, err)
 		}
-		rows := make([]Row, 0, len(discs))
-		for _, d := range discs {
-			row := Row{ModelID: d.ModelID, Price: d.Price, Was: d.Was, Pct: d.Pct}
-			if secScores != nil {
-				if s, ok := secScores[d.ModelID]; ok {
-					row.Score, row.Scored = s, true
-				}
-			}
-			rows = append(rows, row)
-		}
-		sortRows(rows, secScores == nil || sr.Err != "")
-		sr.Rows = top10(rows)
 		res.Sectors = append(res.Sectors, sr)
 	}
 	return res
+}
+
+func sectorResult(sec Sector, discs []discounts.Discount, scores map[Sector]map[string]float64, globalErr error) SectorResult {
+	sr := SectorResult{Sector: sec}
+	var secScores map[string]float64
+	switch {
+	case globalErr != nil:
+	default:
+		secScores = scores[sec]
+		if len(secScores) == 0 {
+			sr.Err = noScoresMessage
+		}
+	}
+	rows := make([]Row, 0, len(discs))
+	for _, d := range discs {
+		row := Row{ModelID: d.ModelID, Price: d.Price, Was: d.Was, Pct: d.Pct}
+		if secScores != nil {
+			if s, ok := secScores[d.ModelID]; ok {
+				row.Score, row.Scored = s, true
+			}
+		}
+		rows = append(rows, row)
+	}
+	sortRows(rows, secScores == nil || sr.Err != "")
+	sr.Rows = top10(rows)
+	return sr
+}
+
+func codeFreeResult(sec Sector, freeIDs []string, scores map[Sector]map[string]float64, globalErr error) SectorResult {
+	sr := SectorResult{Sector: sec}
+	var secScores map[string]float64
+	switch {
+	case globalErr != nil:
+	default:
+		if s, ok := scores[CodeFree]; ok {
+			secScores = s
+		}
+		if len(secScores) == 0 {
+			sr.Err = noScoresMessage
+		}
+	}
+	rows := make([]Row, 0, len(freeIDs))
+	for _, id := range freeIDs {
+		row := Row{ModelID: id}
+		if secScores != nil {
+			if s, ok := secScores[id]; ok {
+				row.Score, row.Scored = s, true
+			}
+		}
+		rows = append(rows, row)
+	}
+	sortRowsFree(rows)
+	sr.Rows = top10(rows)
+	return sr
 }
 
 // sortRows orders scored models by the composite score (scoreWeight ×
@@ -142,6 +186,23 @@ func sortRows(rows []Row, priceOnly bool) {
 			}
 		}
 		return cmp.Compare(a.Pct, b.Pct)
+	})
+}
+
+// sortRowsFree orders free models: scored by benchmark descending, unscored
+// alphabetically after.
+func sortRowsFree(rows []Row) {
+	slices.SortStableFunc(rows, func(a, b Row) int {
+		if a.Scored != b.Scored {
+			if b.Scored {
+				return 1
+			}
+			return -1
+		}
+		if a.Scored {
+			return cmp.Compare(b.Score, a.Score)
+		}
+		return cmp.Compare(a.ModelID, b.ModelID)
 	})
 }
 

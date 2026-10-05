@@ -94,10 +94,11 @@ func (p *Provider) Scores(ctx context.Context) (map[rank.Sector]map[string]float
 		return nil, errors.New(sanitize(fmt.Sprintf("unparseable response: %v", err), p.key))
 	}
 	out := map[rank.Sector]map[string]float64{
-		rank.Math:    {},
-		rank.LCR:     {},
-		rank.Finance: {},
-		rank.Code:    {},
+		rank.Math:     {},
+		rank.LCR:      {},
+		rank.Finance:  {},
+		rank.Code:     {},
+		rank.CodeFree: {},
 	}
 	for _, m := range r.Data {
 		id, ok := matches[normalize(m.Slug)]
@@ -121,6 +122,7 @@ func (p *Provider) Scores(ctx context.Context) (map[rank.Sector]map[string]float
 		}
 		if v := m.Evaluations.CodingIndex; v != 0 {
 			out[rank.Code][id] = v
+			out[rank.CodeFree][id] = v
 		}
 	}
 	return out, nil
@@ -177,13 +179,20 @@ func isTransient(status int) bool {
 }
 
 // matchTable maps normalized AA identifiers to OpenRouter model ids.
+// :free-suffixed ids are also entered without the suffix so AA slugs match.
 func (p *Provider) matchTable() map[string]string {
-	m := make(map[string]string, len(p.ids))
+	m := make(map[string]string, len(p.ids)*2)
 	for _, id := range p.ids {
 		id = strings.TrimPrefix(id, "~")
 		m[normalize(id)] = id
 		if _, tail, ok := strings.Cut(id, "/"); ok {
 			m[normalize(tail)] = id
+		}
+		if base, ok := strings.CutSuffix(id, ":free"); ok {
+			m[normalize(base)] = id
+			if _, tail, ok := strings.Cut(base, "/"); ok {
+				m[normalize(tail)] = id
+			}
 		}
 	}
 	return m

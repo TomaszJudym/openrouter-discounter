@@ -46,20 +46,22 @@ func run() error {
 		// are simply missing from the report
 		log.Printf("endpoint fetch failures (continuing): %v", err)
 	}
-	if len(discs) == 0 {
-		return deliver(ctx, hc, token, chatID, format.NoDiscounts(free, now))
-	}
-
 	ids := make([]string, len(models))
 	for i, m := range models {
 		ids[i] = m.ID
 	}
 	prov := aa.New(hc, os.Getenv("AA_API_KEY"), ids)
-	res := rank.Rank(ctx, discs, prov)
+	res := rank.Rank(ctx, discs, free, prov)
 
-	for _, msg := range format.Messages(res, free, now) {
-		if err := deliver(ctx, hc, token, chatID, msg); err != nil {
+	if len(discs) == 0 {
+		if err := deliver(ctx, hc, token, chatID, format.NoDiscounts(free, now)); err != nil {
 			return err
+		}
+	} else {
+		for _, msg := range format.Messages(res, free, now) {
+			if err := deliver(ctx, hc, token, chatID, msg); err != nil {
+				return err
+			}
 		}
 	}
 	updatePresets(ctx, hc, res)

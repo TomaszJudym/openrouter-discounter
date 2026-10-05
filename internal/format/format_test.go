@@ -191,6 +191,38 @@ func manyRows() []rank.Row {
 	return rows
 }
 
+func TestCodeFreeTableLayout(t *testing.T) {
+	res := rank.Result{
+		Sectors: []rank.SectorResult{{
+			Sector: rank.CodeFree,
+			Rows: []rank.Row{
+				{ModelID: "google/gemini-2.5-flash:free", Score: 88.4, Scored: true},
+				{ModelID: "meta/llama-4-scout:free", Score: 0, Scored: false},
+			},
+		}},
+	}
+	msgs := Messages(res, nil, noon())
+	if len(msgs) != 1 {
+		t.Fatalf("Messages() produced %d messages, want 1", len(msgs))
+	}
+	m := msgs[0]
+	for _, want := range []string{
+		"CODE-FREE — top 10 free coding models (AA Coding Index)",
+		"google/gemini-2.5-flash…",
+		"88.4",
+		"meta/llama-4-scout:free",
+		"n/a",
+	} {
+		if !strings.Contains(m, want) {
+			t.Errorf("message missing %q:\n%s", want, m)
+		}
+	}
+	// no price columns
+	if strings.Contains(m, "→") {
+		t.Error("code-free table contains price arrow")
+	}
+}
+
 func runeIndex(s, sub string) int {
 	before, _, ok := strings.Cut(s, sub)
 	if !ok {

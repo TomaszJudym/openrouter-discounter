@@ -116,6 +116,22 @@ func TestNormalizeMatching(t *testing.T) {
 	}
 }
 
+func TestMatchTableFreeSuffix(t *testing.T) {
+	p := New(nil, "k", []string{
+		"google/gemini-2.5-flash:free",
+		"google/gemini-2.5-flash",
+	})
+	m := p.matchTable()
+	// AA slug "gemini-2-5-flash" → normalized "gemini25flash" should match the :free id
+	if got := m["gemini25flash"]; got != "google/gemini-2.5-flash:free" && got != "google/gemini-2.5-flash" {
+		t.Errorf("matchTable[gemini25flash] = %q, want either free or base id", got)
+	}
+	// AA creator+slug "google-gemini-2-5-flash" → "googlegemini25flash"
+	if got := m["googlegemini25flash"]; got == "" {
+		t.Error("matchTable[googlegemini25flash] missing")
+	}
+}
+
 func TestResponseDecode(t *testing.T) {
 	var r response
 	if err := json.Unmarshal([]byte(aaPayload), &r); err != nil {

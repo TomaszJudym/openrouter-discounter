@@ -29,6 +29,7 @@ var systemPrompt = strings.TrimSpace(systemPromptFile)
 // support it: the API stores it in the preset config, and frontier models
 // that understand it pick it up.
 const verbosity = "low"
+const reasoningEffort = "max"
 
 // Slugs maps ranked sectors to the user's preset slugs.
 var Slugs = map[rank.Sector]string{
@@ -47,7 +48,10 @@ type version struct {
 	SystemPrompt string `json:"system_prompt"`
 	Config       struct {
 		Models    []string `json:"models"`
-		Verbosity string   `json:"verbosity"`
+		Reasoning struct {
+			Effort string `json:"effort"`
+		} `json:"reasoning"`
+		Verbosity string `json:"verbosity"`
 	} `json:"config"`
 }
 
@@ -113,6 +117,7 @@ func topScored(rows []rank.Row, n int) []string {
 // sameVersion reports whether the designated version already matches.
 func sameVersion(v version, models []string) bool {
 	return strings.TrimSpace(v.SystemPrompt) == systemPrompt &&
+		v.Config.Reasoning.Effort == reasoningEffort &&
 		v.Config.Verbosity == verbosity &&
 		slices.Equal(v.Config.Models, models)
 }
@@ -147,6 +152,7 @@ func (c *Client) post(ctx context.Context, slug string, models []string) error {
 		"messages":  []map[string]string{{"role": "system", "content": systemPrompt}},
 		"models":    models,
 		"verbosity": verbosity,
+		"reasoning": map[string]string{"effort": reasoningEffort},
 	})
 	if err != nil {
 		return fmt.Errorf("marshal: %w", err)

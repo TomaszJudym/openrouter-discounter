@@ -70,6 +70,7 @@ func matchingVersion() presetResponse {
 	r.Data.DesignatedVersion.SystemPrompt = systemPrompt
 	r.Data.DesignatedVersion.Config.Models = []string{"z-ai/glm-4.7", "deepseek/deepseek-v3.1-terminus", "minimax/minimax-m2"}
 	r.Data.DesignatedVersion.Config.Verbosity = verbosity
+	r.Data.DesignatedVersion.Config.Reasoning.Effort = reasoningEffort
 	return r
 }
 
@@ -97,6 +98,10 @@ func TestUpdatePostsTop3Scored(t *testing.T) {
 	body := rec.postBodies[0]
 	if body["verbosity"] != "low" {
 		t.Errorf("verbosity = %v, want low", body["verbosity"])
+	}
+	reas, ok := body["reasoning"].(map[string]any)
+	if !ok || reas["effort"] != "max" {
+		t.Errorf("reasoning = %v, want {effort: max}", body["reasoning"])
 	}
 	msgs, ok := body["messages"].([]any)
 	if !ok || len(msgs) != 1 {
@@ -151,6 +156,17 @@ func TestUpdatePostsWhenVerbosityMissing(t *testing.T) {
 	updated, err := c.Update(t.Context(), mathRows())
 	if err != nil || !updated {
 		t.Fatalf("Update() = %v, %v, want updated (verbosity missing)", updated, err)
+	}
+}
+
+func TestUpdatePostsWhenReasoningMissing(t *testing.T) {
+	rec := &recorder{}
+	cur := matchingVersion()
+	cur.Data.DesignatedVersion.Config.Reasoning.Effort = ""
+	c := serverFor(t, rec, &cur, http.StatusOK)
+	updated, err := c.Update(t.Context(), mathRows())
+	if err != nil || !updated {
+		t.Fatalf("Update() = %v, %v, want updated (reasoning missing)", updated, err)
 	}
 }
 

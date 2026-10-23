@@ -76,8 +76,15 @@ func matchingVersion() presetResponse {
 
 func TestSlugsCoverAllSectors(t *testing.T) {
 	for _, sec := range rank.Sectors {
-		if got := Slugs[sec]; !strings.HasPrefix(got, "admech-") {
-			t.Errorf("Slugs[%s] = %q, want an admech-* slug", sec, got)
+		switch sec {
+		case rank.StrongestDiscount:
+			if got := Slugs[sec]; got != "strongest-discount" {
+				t.Errorf("Slugs[%s] = %q, want strongest-discount", sec, got)
+			}
+		default:
+			if got := Slugs[sec]; !strings.HasPrefix(got, "admech-") && got != "expensive-long" {
+				t.Errorf("Slugs[%s] = %q, want valid slug", sec, got)
+			}
 		}
 	}
 }
@@ -189,6 +196,167 @@ func TestUpdateAPIErrorIsReturned(t *testing.T) {
 	_, err := c.Update(t.Context(), mathRows())
 	if err == nil || !strings.Contains(err.Error(), "400") {
 		t.Fatalf("Update() error = %v, want 400 error", err)
+	}
+}
+
+func strongestDiscountRows() rank.SectorResult {
+	return rank.SectorResult{Sector: rank.StrongestDiscount, Rows: []rank.Row{
+		{ModelID: "google/gemini-2.5-pro", Score: 89.2, Scored: true},
+		{ModelID: "openai/o3", Score: 87.5, Scored: true},
+		{ModelID: "anthropic/claude-opus-4", Score: 85.1, Scored: true},
+	}}
+}
+
+func TestStrongestDiscountPostBody(t *testing.T) {
+	rec := &recorder{}
+	c := serverFor(t, rec, nil, http.StatusNotFound)
+	updated, err := c.Update(t.Context(), strongestDiscountRows())
+	if err != nil {
+		t.Fatalf("Update() error = %v, want nil", err)
+	}
+	if !updated {
+		t.Error("Update() = false, want true (preset missing)")
+	}
+	if len(rec.postBodies) != 1 {
+		t.Fatalf("POST count = %d, want 1", len(rec.postBodies))
+	}
+	body := rec.postBodies[0]
+	// system prompt = halflight
+	msgs := body["messages"].([]any)
+	m0 := msgs[0].(map[string]any)
+	if m0["content"] != halflightPrompt {
+		t.Errorf("system prompt = %q, want halflight prompt", m0["content"])
+	}
+	// verbosity = low
+	if body["verbosity"] != "low" {
+		t.Errorf("verbosity = %v, want low", body["verbosity"])
+	}
+	// reasoning = {effort: max, enabled: true}
+	reas := body["reasoning"].(map[string]any)
+	if reas["effort"] != "max" {
+		t.Errorf("reasoning.effort = %v, want max", reas["effort"])
+	}
+	if reas["enabled"] != true {
+		t.Errorf("reasoning.enabled = %v, want true", reas["enabled"])
+	}
+	// sampling params
+	if body["temperature"] != 1.15 {
+		t.Errorf("temperature = %v, want 1.15", body["temperature"])
+	}
+	if body["top_p"] != 0.95 {
+		t.Errorf("top_p = %v, want 0.95", body["top_p"])
+	}
+	if body["frequency_penalty"] != 0.4 {
+		t.Errorf("frequency_penalty = %v, want 0.4", body["frequency_penalty"])
+	}
+	if body["presence_penalty"] != 0.4 {
+		t.Errorf("presence_penalty = %v, want 0.4", body["presence_penalty"])
+	}
+}
+
+func TestAdmechPostBodyUnchanged(t *testing.T) {
+	rec := &recorder{}
+	c := serverFor(t, rec, nil, http.StatusNotFound)
+	updated, err := c.Update(t.Context(), mathRows())
+	if err != nil {
+		t.Fatalf("Update() error = %v, want nil", err)
+	}
+	if !updated {
+		t.Error("Update() = false, want true")
+	}
+	if len(rec.postBodies) != 1 {
+		t.Fatalf("POST count = %d, want 1", len(rec.postBodies))
+	}
+	body := rec.postBodies[0]
+	// no sampling keys
+	if _, ok := body["temperature"]; ok {
+		t.Error("temperature key present, want absent")
+	}
+	if _, ok := body["top_p"]; ok {
+		t.Error("top_p key present, want absent")
+	}
+	if _, ok := body["frequency_penalty"]; ok {
+		t.Error("frequency_penalty key present, want absent")
+	}
+	if _, ok := body["presence_penalty"]; ok {
+		t.Error("presence_penalty key present, want absent")
+	}
+	// reasoning = {effort: max} without enabled
+	reas := body["reasoning"].(map[string]any)
+	if reas["effort"] != "max" {
+		t.Errorf("reasoning.effort = %v, want max", reas["effort"])
+	}
+	if _, ok := reas["enabled"]; ok {
+		t.Error("reasoning.enabled key present, want absent")
+	}
+}
+
+func matchingStrongestDiscountVersion() presetResponse {
+	var r presetResponse
+	r.Data.DesignatedVersion.SystemPrompt = halflightPrompt
+	r.Data.DesignatedVersion.Config.Models = []string{"google/gemini-2.5-pro", "openai/o3", "anthropic/claude-opus-4"}
+	r.Data.DesignatedVersion.Config.Verbosity = verbosity
+	r.Data.DesignatedVersion.Config.Reasoning.Effort = reasoningEffort
+	enabled := true
+	r.Data.DesignatedVersion.Config.Reasoning.Enabled = &enabled
+	temp := 1.15
+	r.Data.DesignatedVersion.Config.Temperature = &temp
+	topP := 0.95
+	r.Data.DesignatedVersion.Config.TopP = &topP
+	freq := 0.4
+	r.Data.DesignatedVersion.Config.FrequencyPenalty = &freq
+	pres := 0.4
+	r.Data.DesignatedVersion.Config.PresencePenalty = &pres
+	return r
+}
+
+func TestStrongestDiscountSkipsWhenUnchanged(t *testing.T) {
+	rec := &recorder{}
+	cur := matchingStrongestDiscountVersion()
+	c := serverFor(t, rec, &cur, http.StatusOK)
+	updated, err := c.Update(t.Context(), strongestDiscountRows())
+	if err != nil {
+		t.Fatalf("Update() error = %v, want nil", err)
+	}
+	if updated {
+		t.Error("Update() = true, want false (nothing changed)")
+	}
+	if len(rec.postBodies) != 0 {
+		t.Errorf("POST fired %d times on unchanged preset", len(rec.postBodies))
+	}
+}
+
+func TestStrongestDiscountPostsWhenTemperatureDiffers(t *testing.T) {
+	rec := &recorder{}
+	cur := matchingStrongestDiscountVersion()
+	temp := 1.0
+	cur.Data.DesignatedVersion.Config.Temperature = &temp
+	c := serverFor(t, rec, &cur, http.StatusOK)
+	updated, err := c.Update(t.Context(), strongestDiscountRows())
+	if err != nil || !updated {
+		t.Fatalf("Update() = %v, %v, want updated (temperature differs)", updated, err)
+	}
+}
+
+func TestStrongestDiscountPostsWhenEnabledMissing(t *testing.T) {
+	rec := &recorder{}
+	cur := matchingStrongestDiscountVersion()
+	cur.Data.DesignatedVersion.Config.Reasoning.Enabled = nil
+	c := serverFor(t, rec, &cur, http.StatusOK)
+	updated, err := c.Update(t.Context(), strongestDiscountRows())
+	if err != nil || !updated {
+		t.Fatalf("Update() = %v, %v, want updated (enabled missing)", updated, err)
+	}
+}
+
+func TestStrongestDiscountPostsWhenPromptDiffers(t *testing.T) {
+	rec := &recorder{}
+	cur := matchingStrongestDiscountVersion()
+	cur.Data.DesignatedVersion.SystemPrompt = "wrong prompt"
+	c := serverFor(t, rec, &cur, http.StatusOK)
+	updated, err := c.Update(t.Context(), strongestDiscountRows())
+	if err != nil || !updated {
+		t.Fatalf("Update() = %v, %v, want updated (prompt differs)", updated, err)
 	}
 }
 

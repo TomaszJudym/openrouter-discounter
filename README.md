@@ -54,7 +54,11 @@ With `OPENROUTER_API_KEY` set, each run also repoints the OpenRouter presets
 composite ranking as the report (0.65 benchmark + 0.35 discount), scored on
 the category's AA benchmark. `expensive-long` routes the 3 strongest
 thinking frontier models (catalog AA Intelligence Index, discount-resorted),
-independent of discounts.
+independent of discounts. `strongest-discount` routes to the top-3 strongest-thinking
+(AA Intelligence Index) discounted chat models, carries the HALF-LIGHT persona
+prompt with reasoning effort max and verbosity low, and adds sampling settings
+(temperature 1.15, top_p 0.95, frequency_penalty 0.4, presence_penalty 0.4) for more
+varied, less mechanical replies than the other presets.
 (`artificial_analysis_math_index`, `lcr`, `tau_banking`,
 `artificial_analysis_coding_index`). Unscored models are skipped; if none of
 a category's models scored, that preset is left untouched.

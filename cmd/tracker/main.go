@@ -51,7 +51,8 @@ func run() error {
 	for i, m := range models {
 		ids[i] = m.ID
 	}
-	res := rank.Rank(ctx, discs, free, aa.New(hc, os.Getenv("AA_API_KEY"), ids))
+	prov := aa.New(hc, os.Getenv("AA_API_KEY"), ids)
+	res := rank.Rank(ctx, discs, free, prov)
 	if len(discs) == 0 {
 		return telegram.Send(ctx, hc, token, chatID, format.NoDiscounts(free, now))
 	}
@@ -60,14 +61,23 @@ func run() error {
 			return err
 		}
 	}
-	updatePresets(ctx, hc, append(res.Sectors, rank.SelectExpensiveLong(models, discs)))
+	sectors := append(res.Sectors, rank.SelectExpensiveLong(models, discs))
+	intel, err := prov.Intelligence(ctx)
+	if err != nil {
+		log.Printf("Intelligence fetch failed (skipping strongest-discount): %v", err)
+	} else {
+		sectors = append(sectors, rank.SelectStrongestDiscount(models, discs, intel))
+	}
+	updatePresets(ctx, hc, sectors)
 	return nil
 }
 
 // updatePresets points each category's preset at its top 3 models: the
 // admech-* presets follow the discounted rankings; expensive-long follows
-// the strongest thinking frontier with discount-resorted order. Failures
-// are logged and non-fatal: the Telegram report is the primary output.
+// the strongest thinking frontier with discount-resorted order;
+// strongest-discount routes to the top-3 strongest-thinking discounted
+// chat models. Failures are logged and non-fatal: the Telegram report is
+// the primary output.
 func updatePresets(ctx context.Context, hc *http.Client, sectors []rank.SectorResult) {
 	key := os.Getenv("OPENROUTER_API_KEY")
 	if key == "" {

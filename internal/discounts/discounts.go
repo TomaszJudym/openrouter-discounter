@@ -59,9 +59,26 @@ type Benchmarks struct {
 	} `json:"artificial_analysis"`
 }
 
+// Architecture describes the model's input/output capabilities.
+type Architecture struct {
+	OutputModalities []string `json:"output_modalities"`
+}
+
 // Reasoning is the catalog's reasoning-capability marker.
 type Reasoning struct {
 	Mandatory bool `json:"mandatory"`
+}
+
+// ChatText reports whether the model can produce text output.
+// An empty or nil OutputModalities is treated as unknown but text-capable.
+func (m Model) ChatText() bool {
+	if m.Architecture.OutputModalities == nil {
+		return true
+	}
+	if slices.Contains(m.Architecture.OutputModalities, "text") {
+		return true
+	}
+	return len(m.Architecture.OutputModalities) == 0
 }
 
 // Thinking reports whether the model advertises reasoning support in the
@@ -82,11 +99,12 @@ type Override struct {
 
 // Model is one catalog entry.
 type Model struct {
-	ID                  string     `json:"id"`
-	Pricing             *Pricing   `json:"pricing"`
-	Benchmarks          Benchmarks `json:"benchmarks"`
-	Reasoning           *Reasoning `json:"reasoning"`
-	SupportedParameters []string   `json:"supported_parameters"`
+	ID                  string       `json:"id"`
+	Pricing             *Pricing     `json:"pricing"`
+	Benchmarks          Benchmarks   `json:"benchmarks"`
+	Reasoning           *Reasoning   `json:"reasoning"`
+	SupportedParameters []string     `json:"supported_parameters"`
+	Architecture        Architecture `json:"architecture"`
 }
 
 type response struct {

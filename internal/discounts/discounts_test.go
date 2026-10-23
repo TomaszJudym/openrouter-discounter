@@ -191,6 +191,42 @@ func TestFetchDiscountsMergesEndpointAndWindowRows(t *testing.T) {
 	}
 }
 
+func TestChatText(t *testing.T) {
+	tests := []struct {
+		name string
+		m    Model
+		want bool
+	}{
+		{
+			name: "nil_output_modalities",
+			m:    Model{ID: "a/b"},
+			want: true,
+		},
+		{
+			name: "empty_output_modalities",
+			m:    Model{ID: "a/b", Architecture: Architecture{}},
+			want: true,
+		},
+		{
+			name: "text_in_output_modalities",
+			m:    Model{ID: "a/b", Architecture: Architecture{OutputModalities: []string{"image", "text"}}},
+			want: true,
+		},
+		{
+			name: "missing_text_in_output_modalities",
+			m:    Model{ID: "a/b", Architecture: Architecture{OutputModalities: []string{"image"}}},
+			want: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.m.ChatText(); got != tt.want {
+				t.Errorf("ChatText() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestFetchEndpointsNotFoundYieldsNoError(t *testing.T) {
 	old := endpointsURLFormat
 	t.Cleanup(func() { endpointsURLFormat = old })

@@ -16,12 +16,13 @@ type Sector string
 
 // The ranked sectors, in report order.
 const (
-	Math          Sector = "math"
-	LCR           Sector = "long-context-reasoning"
-	Finance       Sector = "finance"
-	Code          Sector = "code"
-	CodeFree      Sector = "code-free"
-	ExpensiveLong Sector = "expensive-long"
+	Math              Sector = "math"
+	LCR               Sector = "long-context-reasoning"
+	Finance           Sector = "finance"
+	Code              Sector = "code"
+	CodeFree          Sector = "code-free"
+	ExpensiveLong     Sector = "expensive-long"
+	StrongestDiscount Sector = "strongest-discount"
 )
 
 // Label is the display header for the sector.
@@ -39,6 +40,8 @@ func (s Sector) Label() string {
 		return "CODE-FREE — top 10 free coding models (AA Coding Index)"
 	case ExpensiveLong:
 		return "EXPENSIVE-LONG — top 3 strongest thinking frontier"
+	case StrongestDiscount:
+		return "STRONGEST-DISCOUNT — top 3 strongest-thinking discounted"
 	}
 	return string(s)
 }
@@ -131,6 +134,44 @@ func SelectExpensiveLong(models []discounts.Model, discs []discounts.Discount) S
 		return 0
 	})
 	return SectorResult{Sector: ExpensiveLong, Rows: cands}
+}
+
+// SelectStrongestDiscount returns the top 3 discounted models with positive
+// thinking scores that can produce text output. Pool is the discounted rows
+// whose model satisfies ChatText() and whose id does not end in :free or
+// :batch. Only ids with a positive thinking score are included. Order is
+// strongest (highest score) to weakest, stable.
+func SelectStrongestDiscount(models []discounts.Model, discs []discounts.Discount, thinking map[string]float64) SectorResult {
+	if len(thinking) == 0 {
+		return SectorResult{Sector: StrongestDiscount}
+	}
+	catalog := make(map[string]discounts.Model, len(models))
+	for _, m := range models {
+		catalog[m.ID] = m
+	}
+	rows := make([]Row, 0, len(discs))
+	for _, d := range discs {
+		if strings.HasSuffix(d.ModelID, ":free") || strings.HasSuffix(d.ModelID, ":batch") {
+			continue
+		}
+		m, ok := catalog[d.ModelID]
+		if !ok || !m.ChatText() {
+			continue
+		}
+		score, ok := thinking[d.ModelID]
+		if !ok || score <= 0 {
+			continue
+		}
+		rows = append(rows, Row{ModelID: d.ModelID, Price: d.Price, Was: d.Was, Pct: d.Pct, Score: score, Scored: true})
+	}
+	if len(rows) == 0 {
+		return SectorResult{Sector: StrongestDiscount}
+	}
+	slices.SortStableFunc(rows, byScoreDesc)
+	if len(rows) > 3 {
+		rows = rows[:3]
+	}
+	return SectorResult{Sector: StrongestDiscount, Rows: rows}
 }
 
 // Rank builds the per-sector top-10 rankings. With scores available, scored
@@ -250,6 +291,51 @@ func byPct(a, b Row) int { return cmp.Compare(a.Pct, b.Pct) }
 // by scoreWeight, the remainder discount.
 func composite(r Row) float64 {
 	return scoreWeight*r.Score + (1-scoreWeight)*(-r.Pct)
+}
+
+type Candidate struct {
+	ModelID     string
+	CodingScore float64
+	Price       float64
+}
+
+// ScoreModels orders candidates by composite score (benchmark weighted by
+// scoreWeight, price weighted by priceWeight). Price score is 0-100,
+// higher for cheaper models.
+func ScoreModels(cands []Candidate, scoreWeight, priceWeight float64) []string {
+	if len(cands) == 0 {
+		return nil
+	}
+	maxP, minP := cands[0].Price, cands[0].Price
+	for _, c := range cands[1:] {
+		if c.Price > maxP {
+			maxP = c.Price
+		}
+		if c.Price < minP {
+			minP = c.Price
+		}
+	}
+	rangeP := maxP - minP
+	scores := make([]float64, len(cands))
+	for i, c := range cands {
+		priceScore := 100.0
+		if rangeP > 0 {
+			priceScore = 100.0 * (maxP - c.Price) / rangeP
+		}
+		scores[i] = scoreWeight*c.CodingScore + priceWeight*priceScore
+	}
+	order := make([]int, len(cands))
+	for i := range order {
+		order[i] = i
+	}
+	slices.SortStableFunc(order, func(i, j int) int {
+		return cmp.Compare(scores[j], scores[i])
+	})
+	out := make([]string, len(cands))
+	for i, idx := range order {
+		out[i] = cands[idx].ModelID
+	}
+	return out
 }
 
 func top10(rows []Row) []Row {

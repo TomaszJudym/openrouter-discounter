@@ -22,8 +22,14 @@ import (
 //go:embed systemprompt.txt
 var systemPromptFile string
 
+//go:embed halflight.txt
+var halflightPromptFile string
+
 // systemPrompt is the system instruction written into every preset version.
 var systemPrompt = strings.TrimSpace(systemPromptFile)
+
+// halflightPrompt is the HALF-LIGHT persona used only for strongest-discount.
+var halflightPrompt = strings.TrimSpace(halflightPromptFile)
 
 // verbosity is requested on every update even when the routed model does not
 // support it: the API stores it in the preset config, and frontier models
@@ -31,14 +37,45 @@ var systemPrompt = strings.TrimSpace(systemPromptFile)
 const verbosity = "low"
 const reasoningEffort = "max"
 
+// presetSpec holds per-preset configuration.
+type presetSpec struct {
+	systemPrompt     string
+	reasoningEnabled bool
+	sampling         bool // whether to include sampling params
+	temperature      float64
+	topP             float64
+	frequencyPenalty float64
+	presencePenalty  float64
+}
+
+// specs maps sectors to their preset specifications.
+var specs = map[rank.Sector]presetSpec{
+	rank.Math:          {systemPrompt: systemPrompt, reasoningEnabled: false},
+	rank.LCR:           {systemPrompt: systemPrompt, reasoningEnabled: false},
+	rank.Finance:       {systemPrompt: systemPrompt, reasoningEnabled: false},
+	rank.Code:          {systemPrompt: systemPrompt, reasoningEnabled: false},
+	rank.CodeFree:      {systemPrompt: systemPrompt, reasoningEnabled: false},
+	rank.ExpensiveLong: {systemPrompt: systemPrompt, reasoningEnabled: false},
+	rank.StrongestDiscount: {
+		systemPrompt:     halflightPrompt,
+		reasoningEnabled: true,
+		sampling:         true,
+		temperature:      1.15,
+		topP:             0.95,
+		frequencyPenalty: 0.4,
+		presencePenalty:  0.4,
+	},
+}
+
 // Slugs maps ranked sectors to the user's preset slugs.
 var Slugs = map[rank.Sector]string{
-	rank.Math:          "admech-math",
-	rank.LCR:           "admech-long",
-	rank.Finance:       "admech-finance",
-	rank.Code:          "admech-code",
-	rank.CodeFree:      "admech-code-free",
-	rank.ExpensiveLong: "expensive-long",
+	rank.Math:              "admech-math",
+	rank.LCR:               "admech-long",
+	rank.Finance:           "admech-finance",
+	rank.Code:              "admech-code",
+	rank.CodeFree:          "admech-code-free",
+	rank.ExpensiveLong:     "expensive-long",
+	rank.StrongestDiscount: "strongest-discount",
 }
 
 // TopN is how many models each preset routes.
@@ -50,9 +87,14 @@ type version struct {
 	Config       struct {
 		Models    []string `json:"models"`
 		Reasoning struct {
-			Effort string `json:"effort"`
-		} `json:"reasoning"`
-		Verbosity string `json:"verbosity"`
+			Effort  string `json:"effort,omitzero"`
+			Enabled *bool  `json:"enabled,omitzero"`
+		} `json:"reasoning,omitzero"`
+		Verbosity        string   `json:"verbosity"`
+		Temperature      *float64 `json:"temperature,omitempty"`
+		TopP             *float64 `json:"top_p,omitempty"`
+		FrequencyPenalty *float64 `json:"frequency_penalty,omitempty"`
+		PresencePenalty  *float64 `json:"presence_penalty,omitempty"`
 	} `json:"config"`
 }
 
@@ -92,10 +134,10 @@ func (c *Client) Update(ctx context.Context, sr rank.SectorResult) (bool, error)
 	if err != nil {
 		return false, err
 	}
-	if cur != nil && sameVersion(*cur, models) {
+	if cur != nil && sameVersion(*cur, models, sr.Sector) {
 		return false, nil
 	}
-	if err := c.post(ctx, slug, models); err != nil {
+	if err := c.post(ctx, slug, models, sr.Sector); err != nil {
 		return false, err
 	}
 	return true, nil
@@ -116,11 +158,52 @@ func topScored(rows []rank.Row, n int) []string {
 }
 
 // sameVersion reports whether the designated version already matches.
-func sameVersion(v version, models []string) bool {
-	return strings.TrimSpace(v.SystemPrompt) == systemPrompt &&
-		v.Config.Reasoning.Effort == reasoningEffort &&
-		v.Config.Verbosity == verbosity &&
-		slices.Equal(v.Config.Models, models)
+func sameVersion(v version, models []string, sector rank.Sector) bool {
+	spec, ok := specs[sector]
+	if !ok {
+		return false
+	}
+	if !slices.Equal(v.Config.Models, models) {
+		return false
+	}
+	if strings.TrimSpace(v.SystemPrompt) != spec.systemPrompt {
+		return false
+	}
+	if !reasoningMatches(v, spec) {
+		return false
+	}
+	if v.Config.Verbosity != verbosity {
+		return false
+	}
+	if spec.sampling && !samplingMatches(v, spec) {
+		return false
+	}
+	return true
+}
+
+func reasoningMatches(v version, spec presetSpec) bool {
+	if spec.reasoningEnabled {
+		if v.Config.Reasoning.Enabled == nil || !*v.Config.Reasoning.Enabled {
+			return false
+		}
+	}
+	return v.Config.Reasoning.Effort == reasoningEffort
+}
+
+func samplingMatches(v version, spec presetSpec) bool {
+	if v.Config.Temperature == nil || *v.Config.Temperature != spec.temperature {
+		return false
+	}
+	if v.Config.TopP == nil || *v.Config.TopP != spec.topP {
+		return false
+	}
+	if v.Config.FrequencyPenalty == nil || *v.Config.FrequencyPenalty != spec.frequencyPenalty {
+		return false
+	}
+	if v.Config.PresencePenalty == nil || *v.Config.PresencePenalty != spec.presencePenalty {
+		return false
+	}
+	return true
 }
 
 func (c *Client) current(ctx context.Context, slug string) (*version, error) {
@@ -148,18 +231,38 @@ func (c *Client) current(ctx context.Context, slug string) (*version, error) {
 	return &r.Data.DesignatedVersion, nil
 }
 
-func (c *Client) post(ctx context.Context, slug string, models []string) error {
-	body, err := json.Marshal(map[string]any{
-		"messages":  []map[string]string{{"role": "system", "content": systemPrompt}},
+func makeBody(spec presetSpec, models []string) map[string]any {
+	reasoning := map[string]any{"effort": reasoningEffort}
+	if spec.reasoningEnabled {
+		reasoning["enabled"] = true
+	}
+	body := map[string]any{
+		"messages":  []map[string]string{{"role": "system", "content": spec.systemPrompt}},
 		"models":    models,
 		"verbosity": verbosity,
-		"reasoning": map[string]string{"effort": reasoningEffort},
-	})
+		"reasoning": reasoning,
+	}
+	if spec.sampling {
+		body["temperature"] = spec.temperature
+		body["top_p"] = spec.topP
+		body["frequency_penalty"] = spec.frequencyPenalty
+		body["presence_penalty"] = spec.presencePenalty
+	}
+	return body
+}
+
+func (c *Client) post(ctx context.Context, slug string, models []string, sector rank.Sector) error {
+	spec, ok := specs[sector]
+	if !ok {
+		return fmt.Errorf("no spec for sector %q", sector)
+	}
+	body := makeBody(spec, models)
+	bodyBytes, err := json.Marshal(body)
 	if err != nil {
 		return fmt.Errorf("marshal: %w", err)
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		c.base+"/presets/"+slug+"/chat/completions", bytes.NewReader(body))
+		c.base+"/presets/"+slug+"/chat/completions", bytes.NewReader(bodyBytes))
 	if err != nil {
 		return fmt.Errorf("build request: %w", err)
 	}

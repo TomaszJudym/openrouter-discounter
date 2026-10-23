@@ -133,6 +133,116 @@ func TestMatchTableFreeSuffix(t *testing.T) {
 	}
 }
 
+func TestIntelligenceMapsSlugsToIDs(t *testing.T) {
+	p, _ := providerFor(t, `{"status":200,"data":[
+	 {"id":"1","name":"Model A","slug":"model-a","model_creator":{"slug":"vendor"},
+	  "evaluations":{"artificial_analysis_intelligence_index":85.5}},
+	 {"id":"2","name":"Model B","slug":"model-b","model_creator":{"slug":"vendor"},
+	  "evaluations":{"artificial_analysis_intelligence_index":70.0}}
+	]}`, http.StatusOK, []string{"vendor/model.a", "vendor/model-b"})
+	got, err := p.Intelligence(t.Context())
+	if err != nil {
+		t.Fatalf("Intelligence() error = %v, want nil", err)
+	}
+	if len(got) != 2 {
+		t.Errorf("Intelligence() = %d entries, want 2", len(got))
+	}
+	if got["vendor/model.a"] != 85.5 {
+		t.Errorf("Intelligence[vendor/model.a] = %v, want 85.5", got["vendor/model.a"])
+	}
+	if got["vendor/model-b"] != 70.0 {
+		t.Errorf("Intelligence[vendor/model-b] = %v, want 70.0", got["vendor/model-b"])
+	}
+}
+
+func TestIntelligenceThinkingSuffixStripsAndTakesPrecedence(t *testing.T) {
+	p, _ := providerFor(t, `{"status":200,"data":[
+	 {"id":"1","slug":"model-a","model_creator":{"slug":"vendor"},
+	  "evaluations":{"artificial_analysis_intelligence_index":60.0}},
+	 {"id":"2","slug":"model-a-thinking","model_creator":{"slug":"vendor"},
+	  "evaluations":{"artificial_analysis_intelligence_index":90.0}}
+	]}`, http.StatusOK, []string{"vendor/model-a"})
+	got, err := p.Intelligence(t.Context())
+	if err != nil {
+		t.Fatalf("Intelligence() error = %v, want nil", err)
+	}
+	if got["vendor/model-a"] != 90.0 {
+		t.Errorf("Intelligence[vendor/model-a] = %v, want 90.0 (thinking variant)", got["vendor/model-a"])
+	}
+}
+
+func TestIntelligenceBaseFillsWithoutThinkingVariant(t *testing.T) {
+	p, _ := providerFor(t, `{"status":200,"data":[
+	 {"id":"1","slug":"model-a","model_creator":{"slug":"vendor"},
+	  "evaluations":{"artificial_analysis_intelligence_index":75.0}}
+	]}`, http.StatusOK, []string{"vendor/model-a"})
+	got, err := p.Intelligence(t.Context())
+	if err != nil {
+		t.Fatalf("Intelligence() error = %v, want nil", err)
+	}
+	if got["vendor/model-a"] != 75.0 {
+		t.Errorf("Intelligence[vendor/model-a] = %v, want 75.0 (base)", got["vendor/model-a"])
+	}
+}
+
+func TestIntelligenceOmitsZeroAndNull(t *testing.T) {
+	p, _ := providerFor(t, `{"status":200,"data":[
+	 {"id":"1","slug":"model-a","model_creator":{"slug":"vendor"},
+	  "evaluations":{"artificial_analysis_intelligence_index":0}},
+	 {"id":"2","slug":"model-b","model_creator":{"slug":"vendor"}}
+	]}`, http.StatusOK, []string{"vendor/model-a", "vendor/model-b"})
+	got, err := p.Intelligence(t.Context())
+	if err != nil {
+		t.Fatalf("Intelligence() error = %v, want nil", err)
+	}
+	if _, ok := got["vendor/model-a"]; ok {
+		t.Error("Intelligence[vendor/model-a] present, want absent (zero)")
+	}
+	if _, ok := got["vendor/model-b"]; ok {
+		t.Error("Intelligence[vendor/model-b] present, want absent (null)")
+	}
+}
+
+func TestFetchSharedBetweenScoresAndIntelligence(t *testing.T) {
+	var count int
+	srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		count++
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"status":200,"data":[
+		 {"id":"1","slug":"model-a","model_creator":{"slug":"vendor"},
+		  "evaluations":{"artificial_analysis_math_index":68.25,"artificial_analysis_intelligence_index":85.0}}
+		]}`))
+	}))
+	p := New(srv.Client(), "key", []string{"vendor/model-a"})
+	p.baseURL = srv.URL
+	p.attempts = 1
+
+	_, err1 := p.Scores(t.Context())
+	if err1 != nil {
+		t.Fatalf("Scores() error = %v", err1)
+	}
+	_, err2 := p.Intelligence(t.Context())
+	if err2 != nil {
+		t.Fatalf("Intelligence() error = %v", err2)
+	}
+	if count != 1 {
+		t.Errorf("server hit %d times, want 1 (shared fetch)", count)
+	}
+}
+
+func TestIntelligenceErrorSanitized(t *testing.T) {
+	secret := "aa_secret_value_xyz"
+	p, _ := providerFor(t, "error with "+secret, http.StatusForbidden, []string{"a/b"})
+	p.key = secret
+	_, err := p.Intelligence(t.Context())
+	if err == nil {
+		t.Fatal("Intelligence() error = nil, want non-200 error")
+	}
+	if contains := strings.Contains(err.Error(), secret); contains {
+		t.Errorf("error contains the API key: %q", err.Error())
+	}
+}
+
 func TestResponseDecode(t *testing.T) {
 	var r response
 	if err := json.Unmarshal([]byte(aaPayload), &r); err != nil {

@@ -222,3 +222,155 @@ func idsOf(rows []Row) []string {
 	}
 	return out
 }
+
+func TestScoreModelsCodingOnly(t *testing.T) {
+	cands := []Candidate{
+		{ModelID: "a/weak", CodingScore: 50, Price: 1.0},
+		{ModelID: "b/strong", CodingScore: 90, Price: 5.0},
+		{ModelID: "c/mid", CodingScore: 70, Price: 3.0},
+	}
+	got := ScoreModels(cands, 1.0, 0.0)
+	want := []string{"b/strong", "c/mid", "a/weak"}
+	for i, w := range want {
+		if i >= len(got) || got[i] != w {
+			t.Errorf("ScoreModels[%d] = %q, want %q", i, got, w)
+			break
+		}
+	}
+}
+
+func TestScoreModelsPriceOnly(t *testing.T) {
+	cands := []Candidate{
+		{ModelID: "a/expensive", CodingScore: 80, Price: 10.0},
+		{ModelID: "b/cheap", CodingScore: 80, Price: 1.0},
+		{ModelID: "c/mid", CodingScore: 80, Price: 5.0},
+	}
+	// All same coding score → ordering is by price (cheaper first).
+	got := ScoreModels(cands, 0.0, 1.0)
+	want := []string{"b/cheap", "c/mid", "a/expensive"}
+	for i, w := range want {
+		if i >= len(got) || got[i] != w {
+			t.Errorf("ScoreModels[%d] = %q, want %q (got %v)", i, got, w, got)
+			break
+		}
+	}
+}
+
+func TestScoreModelsComposite(t *testing.T) {
+	// b: coding 100, price 2.0  → priceScore 100, composite = 0.6*100 + 0.4*100 = 100
+	// a: coding 50,  price 1.0  → priceScore 100, composite = 0.6*50  + 0.4*100 = 70
+	// c: coding 100, price 0.5  → priceScore 100 (still 100, range 0), composite = 100
+	// With distinct prices: a=cheapest→100, b=mid→33.3, c=most expensive→0
+	cands := []Candidate{
+		{ModelID: "a/cheap", CodingScore: 60, Price: 1.0},
+		{ModelID: "b/good", CodingScore: 100, Price: 3.0},
+		{ModelID: "c/expensive", CodingScore: 90, Price: 7.0},
+	}
+	// price range 1–7, range=6
+	// a: priceScore=100*(7-1)/6=100, composite=0.6*60+0.4*100=76
+	// b: priceScore=100*(7-3)/6≈66.7, composite=0.6*100+0.4*66.7≈86.7
+	// c: priceScore=100*(7-7)/6=0, composite=0.6*90+0.4*0=54
+	got := ScoreModels(cands, 0.60, 0.40)
+	want := []string{"b/good", "a/cheap", "c/expensive"}
+	for i, w := range want {
+		if i >= len(got) || got[i] != w {
+			t.Errorf("ScoreModels[%d] = %q, want %q (got %v)", i, got, w, got)
+			break
+		}
+	}
+}
+
+func TestScoreModelsEmpty(t *testing.T) {
+	if got := ScoreModels(nil, 0.6, 0.4); got != nil {
+		t.Errorf("ScoreModels(nil) = %v, want nil", got)
+	}
+}
+
+func TestSelectStrongestDiscountFiltersAndOrders(t *testing.T) {
+	models := []discounts.Model{
+		{ID: "a/chat-text", Architecture: discounts.Architecture{OutputModalities: []string{"text"}}},
+		{ID: "b/image-only", Architecture: discounts.Architecture{OutputModalities: []string{"image"}}},
+		{ID: "c/free:free", Architecture: discounts.Architecture{OutputModalities: nil}},
+		{ID: "d/batch:batch", Architecture: discounts.Architecture{OutputModalities: nil}},
+		{ID: "e/unknown", Architecture: discounts.Architecture{}},
+	}
+	discs := []discounts.Discount{
+		{ModelID: "a/chat-text", Price: 1, Was: 2, Pct: -50},
+		{ModelID: "b/image-only", Price: 2, Was: 4, Pct: -50},
+		{ModelID: "c/free:free", Price: 0, Was: 0, Pct: 0},
+		{ModelID: "d/batch:batch", Price: 3, Was: 6, Pct: -50},
+		{ModelID: "e/unknown", Price: 4, Was: 8, Pct: -50},
+	}
+	thinking := map[string]float64{
+		"a/chat-text":  90.0,
+		"b/image-only": 80.0,
+		"e/unknown":    70.0,
+	}
+	got := SelectStrongestDiscount(models, discs, thinking)
+	if got.Sector != StrongestDiscount {
+		t.Errorf("Sector = %s, want %s", got.Sector, StrongestDiscount)
+	}
+	if len(got.Rows) != 2 {
+		t.Fatalf("Rows = %d, want 2 (chat-text and unknown)", len(got.Rows))
+	}
+	if got.Rows[0].ModelID != "a/chat-text" || got.Rows[0].Score != 90.0 {
+		t.Errorf("Rows[0] = %+v, want a/chat-text score 90", got.Rows[0])
+	}
+	if got.Rows[1].ModelID != "e/unknown" || got.Rows[1].Score != 70.0 {
+		t.Errorf("Rows[1] = %+v, want e/unknown score 70", got.Rows[1])
+	}
+}
+
+func TestSelectStrongestDiscountCapsAtThree(t *testing.T) {
+	models := []discounts.Model{
+		{ID: "a/m1", Architecture: discounts.Architecture{OutputModalities: []string{"text"}}},
+		{ID: "b/m2", Architecture: discounts.Architecture{}},
+		{ID: "c/m3", Architecture: discounts.Architecture{}},
+		{ID: "d/m4", Architecture: discounts.Architecture{}},
+	}
+	discs := []discounts.Discount{
+		{ModelID: "a/m1"}, {ModelID: "b/m2"}, {ModelID: "c/m3"}, {ModelID: "d/m4"},
+	}
+	thinking := map[string]float64{"a/m1": 10, "b/m2": 20, "c/m3": 30, "d/m4": 40}
+	got := SelectStrongestDiscount(models, discs, thinking)
+	if len(got.Rows) != 3 {
+		t.Errorf("Rows = %d, want 3", len(got.Rows))
+	}
+	wantIDs := []string{"d/m4", "c/m3", "b/m2"}
+	for i, w := range wantIDs {
+		if got.Rows[i].ModelID != w {
+			t.Errorf("Rows[%d] = %s, want %s", i, got.Rows[i].ModelID, w)
+		}
+	}
+}
+
+func TestSelectStrongestDiscountEmptyThinking(t *testing.T) {
+	models := []discounts.Model{{ID: "a/m", Architecture: discounts.Architecture{}}}
+	discs := []discounts.Discount{{ModelID: "a/m"}}
+	got := SelectStrongestDiscount(models, discs, nil)
+	if got.Rows != nil {
+		t.Errorf("Rows = %v, want nil (no thinking scores)", got.Rows)
+	}
+}
+
+func TestSelectStrongestDiscountModelMissing(t *testing.T) {
+	models := []discounts.Model{{ID: "other/model"}}
+	discs := []discounts.Discount{{ModelID: "a/missing"}}
+	thinking := map[string]float64{"a/missing": 90}
+	got := SelectStrongestDiscount(models, discs, thinking)
+	if got.Rows != nil {
+		t.Errorf("Rows = %v, want nil (model not in catalog)", got.Rows)
+	}
+}
+
+func TestScoreModelsSinglePrice(t *testing.T) {
+	// All same price → all get priceScore 0, ordered by coding.
+	cands := []Candidate{
+		{ModelID: "a", CodingScore: 60, Price: 1.0},
+		{ModelID: "b", CodingScore: 90, Price: 1.0},
+	}
+	got := ScoreModels(cands, 0.60, 0.40)
+	if got[0] != "b" || got[1] != "a" {
+		t.Errorf("ScoreModels same price = %v, want [b a]", got)
+	}
+}

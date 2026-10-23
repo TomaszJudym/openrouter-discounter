@@ -30,10 +30,11 @@ const (
 const fracToPct = 100
 
 type evaluations struct {
-	ArtificialAnalysisMathIndex float64 `json:"artificial_analysis_math_index"`
-	LCR                         float64 `json:"lcr"`
-	TauBanking                  float64 `json:"tau_banking"`
-	CodingIndex                 float64 `json:"artificial_analysis_coding_index"`
+	ArtificialAnalysisMathIndex         float64 `json:"artificial_analysis_math_index"`
+	LCR                                 float64 `json:"lcr"`
+	TauBanking                          float64 `json:"tau_banking"`
+	CodingIndex                         float64 `json:"artificial_analysis_coding_index"`
+	ArtificialAnalysisIntelligenceIndex float64 `json:"artificial_analysis_intelligence_index"`
 }
 
 type model struct {
@@ -62,6 +63,10 @@ type Provider struct {
 	baseURL  string
 	attempts int
 	backoff  time.Duration
+
+	// cached response from AA API, shared between Scores and Intelligence
+	data []model
+	err  error
 }
 
 // New builds a provider that matches AA scores to orIDs (OpenRouter ids).
@@ -74,18 +79,10 @@ func New(hc *http.Client, key string, orIDs []string) *Provider {
 // that sector's key. Returned error text is sanitized: the API key value is
 // removed and the message is truncated.
 func (p *Provider) Scores(ctx context.Context) (map[rank.Sector]map[string]float64, error) {
-	if p.key == "" {
-		return nil, errors.New(sanitize("AA_API_KEY not set", ""))
+	if err := p.fetch(ctx); err != nil {
+		return nil, err
 	}
 	matches := p.matchTable()
-	body, err := p.get(ctx, p.baseURL)
-	if err != nil {
-		return nil, err // already sanitized
-	}
-	var r response
-	if err := json.Unmarshal(body, &r); err != nil {
-		return nil, errors.New(sanitize(fmt.Sprintf("unparseable response: %v", err), p.key))
-	}
 	out := map[rank.Sector]map[string]float64{
 		rank.Math:     {},
 		rank.LCR:      {},
@@ -93,7 +90,7 @@ func (p *Provider) Scores(ctx context.Context) (map[rank.Sector]map[string]float
 		rank.Code:     {},
 		rank.CodeFree: {},
 	}
-	for _, m := range r.Data {
+	for _, m := range p.data {
 		id, ok := matches[normalize(m.Slug)]
 		if !ok {
 			id, ok = matches[normalize(m.Name)]
@@ -119,6 +116,83 @@ func (p *Provider) Scores(ctx context.Context) (map[rank.Sector]map[string]float
 		}
 	}
 	return out, nil
+}
+
+// Intelligence returns the Artificial Analysis Intelligence Index mapped to
+// OpenRouter model ids. When an AA slug ends with "-thinking", that suffix is
+// stripped before matching; a thinking-variant entry takes precedence over a
+// base entry for the same OpenRouter id. Values <= 0 or null are omitted.
+func (p *Provider) Intelligence(ctx context.Context) (map[string]float64, error) {
+	if err := p.fetch(ctx); err != nil {
+		return nil, err
+	}
+	matches := p.matchTable()
+	out := make(map[string]float64)
+	// First pass: base entries (without -thinking suffix)
+	for _, m := range p.data {
+		slug := m.Slug
+		if strings.HasSuffix(slug, "-thinking") {
+			continue
+		}
+		id, ok := matches[normalize(slug)]
+		if !ok {
+			id, ok = matches[normalize(m.Name)]
+		}
+		if !ok {
+			id, ok = matches[normalize(m.Creator.Slug+"-"+slug)]
+		}
+		if !ok {
+			continue
+		}
+		if v := m.Evaluations.ArtificialAnalysisIntelligenceIndex; v > 0 {
+			out[id] = v
+		}
+	}
+	// Second pass: thinking variants override base entries
+	for _, m := range p.data {
+		slug := m.Slug
+		if !strings.HasSuffix(slug, "-thinking") {
+			continue
+		}
+		baseSlug := strings.TrimSuffix(slug, "-thinking")
+		id, ok := matches[normalize(baseSlug)]
+		if !ok {
+			id, ok = matches[normalize(m.Name)]
+		}
+		if !ok {
+			id, ok = matches[normalize(m.Creator.Slug+"-"+baseSlug)]
+		}
+		if !ok {
+			continue
+		}
+		if v := m.Evaluations.ArtificialAnalysisIntelligenceIndex; v > 0 {
+			out[id] = v
+		}
+	}
+	return out, nil
+}
+
+// fetch loads the AA models once per Provider instance.
+func (p *Provider) fetch(ctx context.Context) error {
+	if p.data != nil || p.err != nil {
+		return p.err
+	}
+	if p.key == "" {
+		p.err = errors.New(sanitize("AA_API_KEY not set", ""))
+		return p.err
+	}
+	body, err := p.get(ctx, p.baseURL)
+	if err != nil {
+		p.err = err
+		return p.err
+	}
+	var r response
+	if err := json.Unmarshal(body, &r); err != nil {
+		p.err = errors.New(sanitize(fmt.Sprintf("unparseable response: %v", err), p.key))
+		return p.err
+	}
+	p.data = r.Data
+	return nil
 }
 
 // get fetches the endpoint with bounded retries on transient failures.

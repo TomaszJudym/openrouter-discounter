@@ -1,4 +1,6 @@
-export GOTOOLCHAIN := "auto"
+# Pin to the go.mod version: go1.27.3 export data (v5) is not yet
+# parseable by golangci-lint 2.13.2, but go1.27.1 (v4) is.
+export GOTOOLCHAIN := "go1.27.1"
 
 alias t := test
 alias l := lint

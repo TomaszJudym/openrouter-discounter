@@ -293,6 +293,8 @@ func composite(r Row) float64 {
 	return scoreWeight*r.Score + (1-scoreWeight)*(-r.Pct)
 }
 
+// Candidate is a scored model submitted to ScoreModels: its OpenRouter id,
+// benchmark score (0-100), and effective price per Mtok.
 type Candidate struct {
 	ModelID     string
 	CodingScore float64

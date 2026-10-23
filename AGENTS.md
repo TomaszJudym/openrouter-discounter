@@ -73,3 +73,6 @@ Column widths: rank 2, model 24, price 8, was 8, Δ% 4, score 5 (adjust as neede
 - Simulated AA failure → price-only tables, notice with redacted error present.
 - Runs leave the repo untouched (no commits, clean `git status`).
 - Telegram API failure → nonzero exit; API error body in logs, token never shown.
+
+## Lint
+- Always run just-lint to verify any code change

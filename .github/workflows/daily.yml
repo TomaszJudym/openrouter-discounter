@@ -4,6 +4,9 @@ on:
   schedule:
     # 22:00 UTC = 07:00 JST; JST has no DST, so a fixed cron is exact.
     - cron: '0 22 * * *'
+  push:
+    branches:
+      - master
   workflow_dispatch:
 
 permissions: {}

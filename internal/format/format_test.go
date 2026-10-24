@@ -206,6 +206,41 @@ func TestCodeFreeTableLayout(t *testing.T) {
 	}
 }
 
+func TestMessagesStrongestDiscountSector(t *testing.T) {
+	res := rank.Result{
+		Sectors: []rank.SectorResult{{
+			Sector: rank.StrongestDiscount,
+			Rows: []rank.Row{
+				{ModelID: "anthropic/claude-opus-4", Price: 5.00, Was: 10.00, Pct: -50, Score: 92.3, Scored: true},
+				{ModelID: "google/gemini-3.0-pro", Price: 1.25, Was: 2.50, Pct: -50, Score: 88.1, Scored: true},
+				{ModelID: "deepseek/deepseek-r2", Price: 0.27, Was: 0.30, Pct: -10, Score: 84.7, Scored: true},
+			},
+		}},
+	}
+	msgs := Messages(res, noon())
+	if len(msgs) != 1 {
+		t.Fatalf("Messages() produced %d messages, want 1", len(msgs))
+	}
+	m := msgs[0]
+	if !strings.Contains(m, "STRONGEST-DISCOUNT — top 3 strongest-thinking discounted") {
+		t.Errorf("strongest-discount label missing:\n%s", m)
+	}
+	for _, want := range []string{
+		"anthropic/claude-opus-4",
+		"google/gemini-3.0-pro",
+		"deepseek/deepseek-r2",
+		"92.3",
+		"88.1",
+		"84.7",
+		"10.00\u21925.00",
+		"2.50\u21921.25",
+	} {
+		if !strings.Contains(m, want) {
+			t.Errorf("message missing %q:\n%s", want, m)
+		}
+	}
+}
+
 func runeIndex(s, sub string) int {
 	before, _, ok := strings.Cut(s, sub)
 	if !ok {

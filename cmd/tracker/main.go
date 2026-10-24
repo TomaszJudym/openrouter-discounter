@@ -56,17 +56,31 @@ func run() error {
 	if len(discs) == 0 {
 		return telegram.Send(ctx, hc, token, chatID, format.NoDiscounts(now))
 	}
-	for _, msg := range format.Messages(res, now) {
+	// Fetch intelligence once, ahead of the Telegram send, so the
+	// strongest-discount section can appear in the report and feed the
+	// preset update with the same computation.
+	intel, err := prov.Intelligence(ctx)
+	if err != nil {
+		log.Printf("Intelligence fetch failed (skipping strongest-discount): %v", err)
+	}
+	intelOK := err == nil
+	var sd rank.SectorResult
+	telegramSectors := res.Sectors
+	if intelOK {
+		sd = rank.SelectStrongestDiscount(models, discs, intel)
+		if len(sd.Rows) > 0 {
+			telegramSectors = append(telegramSectors, sd)
+		}
+	}
+	telegramRes := rank.Result{Sectors: telegramSectors, GlobalErr: res.GlobalErr}
+	for _, msg := range format.Messages(telegramRes, now) {
 		if err := telegram.Send(ctx, hc, token, chatID, msg); err != nil {
 			return err
 		}
 	}
 	sectors := append(res.Sectors, rank.SelectExpensiveLong(models, discs))
-	intel, err := prov.Intelligence(ctx)
-	if err != nil {
-		log.Printf("Intelligence fetch failed (skipping strongest-discount): %v", err)
-	} else {
-		sectors = append(sectors, rank.SelectStrongestDiscount(models, discs, intel))
+	if intelOK && len(sd.Rows) > 0 {
+		sectors = append(sectors, sd)
 	}
 	updatePresets(ctx, hc, sectors)
 	return nil

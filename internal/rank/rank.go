@@ -16,13 +16,14 @@ type Sector string
 
 // The ranked sectors, in report order.
 const (
-	Math              Sector = "math"
-	LCR               Sector = "long-context-reasoning"
-	Finance           Sector = "finance"
-	Code              Sector = "code"
-	CodeFree          Sector = "code-free"
-	ExpensiveLong     Sector = "expensive-long"
-	StrongestDiscount Sector = "strongest-discount"
+	Math                       Sector = "math"
+	LCR                        Sector = "long-context-reasoning"
+	Finance                    Sector = "finance"
+	Code                       Sector = "code"
+	CodeFree                   Sector = "code-free"
+	ExpensiveLong              Sector = "expensive-long"
+	StrongestDiscountHalflight Sector = "strongest-discount-halflight"
+	StrongestDiscountVolition  Sector = "strongest-discount-volition"
 )
 
 // Label is the display header for the sector.
@@ -40,8 +41,10 @@ func (s Sector) Label() string {
 		return "CODE-FREE — top 10 free coding models (AA Coding Index)"
 	case ExpensiveLong:
 		return "EXPENSIVE-LONG — top 3 strongest thinking frontier"
-	case StrongestDiscount:
-		return "STRONGEST-DISCOUNT — top 3 strongest-thinking discounted"
+	case StrongestDiscountHalflight:
+		return "STRONGEST-DISCOUNT-HALFLIGHT — top 3 strongest-thinking discounted"
+	case StrongestDiscountVolition:
+		return "STRONGEST-DISCOUNT-VOLITION — top 3 strongest-thinking discounted"
 	}
 	return string(s)
 }
@@ -143,7 +146,7 @@ func SelectExpensiveLong(models []discounts.Model, discs []discounts.Discount) S
 // strongest (highest score) to weakest, stable.
 func SelectStrongestDiscount(models []discounts.Model, discs []discounts.Discount, thinking map[string]float64) SectorResult {
 	if len(thinking) == 0 {
-		return SectorResult{Sector: StrongestDiscount}
+		return SectorResult{Sector: StrongestDiscountHalflight}
 	}
 	catalog := make(map[string]discounts.Model, len(models))
 	for _, m := range models {
@@ -165,13 +168,13 @@ func SelectStrongestDiscount(models []discounts.Model, discs []discounts.Discoun
 		rows = append(rows, Row{ModelID: d.ModelID, Price: d.Price, Was: d.Was, Pct: d.Pct, Score: score, Scored: true})
 	}
 	if len(rows) == 0 {
-		return SectorResult{Sector: StrongestDiscount}
+		return SectorResult{Sector: StrongestDiscountHalflight}
 	}
 	slices.SortStableFunc(rows, byScoreDesc)
 	if len(rows) > 3 {
 		rows = rows[:3]
 	}
-	return SectorResult{Sector: StrongestDiscount, Rows: rows}
+	return SectorResult{Sector: StrongestDiscountHalflight, Rows: rows}
 }
 
 // Rank builds the per-sector top-10 rankings. With scores available, scored

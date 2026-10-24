@@ -77,9 +77,9 @@ func matchingVersion() presetResponse {
 func TestSlugsCoverAllSectors(t *testing.T) {
 	for _, sec := range rank.Sectors {
 		switch sec {
-		case rank.StrongestDiscount:
-			if got := Slugs[sec]; got != "strongest-discount" {
-				t.Errorf("Slugs[%s] = %q, want strongest-discount", sec, got)
+		case rank.StrongestDiscountHalflight:
+			if got := Slugs[sec]; got != "strongest-discount-halflight" {
+				t.Errorf("Slugs[%s] = %q, want strongest-discount-halflight", sec, got)
 			}
 		default:
 			if got := Slugs[sec]; !strings.HasPrefix(got, "admech-") && got != "expensive-long" {
@@ -200,7 +200,7 @@ func TestUpdateAPIErrorIsReturned(t *testing.T) {
 }
 
 func strongestDiscountRows() rank.SectorResult {
-	return rank.SectorResult{Sector: rank.StrongestDiscount, Rows: []rank.Row{
+	return rank.SectorResult{Sector: rank.StrongestDiscountHalflight, Rows: []rank.Row{
 		{ModelID: "google/gemini-2.5-pro", Score: 89.2, Scored: true},
 		{ModelID: "openai/o3", Score: 87.5, Scored: true},
 		{ModelID: "anthropic/claude-opus-4", Score: 85.1, Scored: true},
@@ -251,6 +251,48 @@ func TestStrongestDiscountPostBody(t *testing.T) {
 	}
 	if body["presence_penalty"] != 0.4 {
 		t.Errorf("presence_penalty = %v, want 0.4", body["presence_penalty"])
+	}
+}
+
+func strongestDiscountVolitionRows() rank.SectorResult {
+	return rank.SectorResult{Sector: rank.StrongestDiscountVolition, Rows: []rank.Row{
+		{ModelID: "google/gemini-2.5-pro", Score: 89.2, Scored: true},
+		{ModelID: "openai/o3", Score: 87.5, Scored: true},
+		{ModelID: "anthropic/claude-opus-4", Score: 85.1, Scored: true},
+	}}
+}
+
+func TestStrongestDiscountVolitionPostBody(t *testing.T) {
+	rec := &recorder{}
+	c := serverFor(t, rec, nil, http.StatusNotFound)
+	updated, err := c.Update(t.Context(), strongestDiscountVolitionRows())
+	if err != nil {
+		t.Fatalf("Update() error = %v, want nil", err)
+	}
+	if !updated {
+		t.Error("Update() = false, want true (preset missing)")
+	}
+	if len(rec.postBodies) != 1 {
+		t.Fatalf("POST count = %d, want 1", len(rec.postBodies))
+	}
+	body := rec.postBodies[0]
+	// system prompt = volition
+	msgs := body["messages"].([]any)
+	m0 := msgs[0].(map[string]any)
+	if m0["content"] != volitionPrompt {
+		t.Errorf("system prompt = %q, want volition prompt", m0["content"])
+	}
+	// reasoning = {effort: max, enabled: true}
+	reas := body["reasoning"].(map[string]any)
+	if reas["effort"] != "max" {
+		t.Errorf("reasoning.effort = %v, want max", reas["effort"])
+	}
+	if reas["enabled"] != true {
+		t.Errorf("reasoning.enabled = %v, want true", reas["enabled"])
+	}
+	// sampling params (same config as halflight)
+	if body["temperature"] != 1.15 {
+		t.Errorf("temperature = %v, want 1.15", body["temperature"])
 	}
 }
 

@@ -25,11 +25,17 @@ var systemPromptFile string
 //go:embed halflight.txt
 var halflightPromptFile string
 
+//go:embed volition.txt
+var volitionPromptFile string
+
 // systemPrompt is the system instruction written into every preset version.
 var systemPrompt = strings.TrimSpace(systemPromptFile)
 
-// halflightPrompt is the HALF-LIGHT persona used only for strongest-discount.
+// halflightPrompt is the HALF-LIGHT persona used only for strongest-discount-halflight.
 var halflightPrompt = strings.TrimSpace(halflightPromptFile)
+
+// volitionPrompt is the VOLITION persona used only for strongest-discount-volition.
+var volitionPrompt = strings.TrimSpace(volitionPromptFile)
 
 // verbosity is requested on every update even when the routed model does not
 // support it: the API stores it in the preset config, and frontier models
@@ -56,8 +62,17 @@ var specs = map[rank.Sector]presetSpec{
 	rank.Code:          {systemPrompt: systemPrompt, reasoningEnabled: false},
 	rank.CodeFree:      {systemPrompt: systemPrompt, reasoningEnabled: false},
 	rank.ExpensiveLong: {systemPrompt: systemPrompt, reasoningEnabled: false},
-	rank.StrongestDiscount: {
+	rank.StrongestDiscountHalflight: {
 		systemPrompt:     halflightPrompt,
+		reasoningEnabled: true,
+		sampling:         true,
+		temperature:      1.15,
+		topP:             0.95,
+		frequencyPenalty: 0.4,
+		presencePenalty:  0.4,
+	},
+	rank.StrongestDiscountVolition: {
+		systemPrompt:     volitionPrompt,
 		reasoningEnabled: true,
 		sampling:         true,
 		temperature:      1.15,
@@ -69,13 +84,14 @@ var specs = map[rank.Sector]presetSpec{
 
 // Slugs maps ranked sectors to the user's preset slugs.
 var Slugs = map[rank.Sector]string{
-	rank.Math:              "admech-math",
-	rank.LCR:               "admech-long",
-	rank.Finance:           "admech-finance",
-	rank.Code:              "admech-code",
-	rank.CodeFree:          "admech-code-free",
-	rank.ExpensiveLong:     "expensive-long",
-	rank.StrongestDiscount: "strongest-discount",
+	rank.Math:                       "admech-math",
+	rank.LCR:                        "admech-long",
+	rank.Finance:                    "admech-finance",
+	rank.Code:                       "admech-code",
+	rank.CodeFree:                   "admech-code-free",
+	rank.ExpensiveLong:              "expensive-long",
+	rank.StrongestDiscountHalflight: "strongest-discount-halflight",
+	rank.StrongestDiscountVolition:  "strongest-discount-volition",
 }
 
 // TopN is how many models each preset routes.

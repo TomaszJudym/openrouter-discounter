@@ -58,18 +58,22 @@ func run() error {
 	}
 	// Fetch intelligence once, ahead of the Telegram send, so the
 	// strongest-discount section can appear in the report and feed the
-	// preset update with the same computation.
+	// preset update with the same computation. The halflight sector is
+	// shown in Telegram; both halflight and volition presets are updated
+	// with the same top-3 strongest-thinking discounted models.
 	intel, err := prov.Intelligence(ctx)
 	if err != nil {
 		log.Printf("Intelligence fetch failed (skipping strongest-discount): %v", err)
 	}
 	intelOK := err == nil
 	var sd rank.SectorResult
+	var sdVolition rank.SectorResult
 	telegramSectors := res.Sectors
 	if intelOK {
 		sd = rank.SelectStrongestDiscount(models, discs, intel)
 		if len(sd.Rows) > 0 {
 			telegramSectors = append(telegramSectors, sd)
+			sdVolition = rank.SectorResult{Sector: rank.StrongestDiscountVolition, Rows: sd.Rows}
 		}
 	}
 	telegramRes := rank.Result{Sectors: telegramSectors, GlobalErr: res.GlobalErr}
@@ -80,7 +84,7 @@ func run() error {
 	}
 	sectors := append(res.Sectors, rank.SelectExpensiveLong(models, discs))
 	if intelOK && len(sd.Rows) > 0 {
-		sectors = append(sectors, sd)
+		sectors = append(sectors, sd, sdVolition)
 	}
 	updatePresets(ctx, hc, sectors)
 	return nil
@@ -89,8 +93,9 @@ func run() error {
 // updatePresets points each category's preset at its top 3 models: the
 // admech-* presets follow the discounted rankings; expensive-long follows
 // the strongest thinking frontier with discount-resorted order;
-// strongest-discount routes to the top-3 strongest-thinking discounted
-// chat models. Failures are logged and non-fatal: the Telegram report is
+// strongest-discount-halflight and strongest-discount-volition route to
+// the top-3 strongest-thinking discounted chat models (same models, distinct
+// personas). Failures are logged and non-fatal: the Telegram report is
 // the primary output.
 func updatePresets(ctx context.Context, hc *http.Client, sectors []rank.SectorResult) {
 	key := os.Getenv("OPENROUTER_API_KEY")

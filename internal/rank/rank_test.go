@@ -307,8 +307,8 @@ func TestSelectStrongestDiscountFiltersAndOrders(t *testing.T) {
 		"e/unknown":    70.0,
 	}
 	got := SelectStrongestDiscount(models, discs, thinking)
-	if got.Sector != StrongestDiscount {
-		t.Errorf("Sector = %s, want %s", got.Sector, StrongestDiscount)
+	if got.Sector != StrongestDiscountHalflight {
+		t.Errorf("Sector = %s, want %s", got.Sector, StrongestDiscountHalflight)
 	}
 	if len(got.Rows) != 2 {
 		t.Fatalf("Rows = %d, want 2 (chat-text and unknown)", len(got.Rows))

@@ -209,7 +209,7 @@ func TestCodeFreeTableLayout(t *testing.T) {
 func TestMessagesStrongestDiscountSector(t *testing.T) {
 	res := rank.Result{
 		Sectors: []rank.SectorResult{{
-			Sector: rank.StrongestDiscount,
+			Sector: rank.StrongestDiscountHalflight,
 			Rows: []rank.Row{
 				{ModelID: "anthropic/claude-opus-4", Price: 5.00, Was: 10.00, Pct: -50, Score: 92.3, Scored: true},
 				{ModelID: "google/gemini-3.0-pro", Price: 1.25, Was: 2.50, Pct: -50, Score: 88.1, Scored: true},
@@ -222,7 +222,7 @@ func TestMessagesStrongestDiscountSector(t *testing.T) {
 		t.Fatalf("Messages() produced %d messages, want 1", len(msgs))
 	}
 	m := msgs[0]
-	if !strings.Contains(m, "STRONGEST-DISCOUNT — top 3 strongest-thinking discounted") {
+	if !strings.Contains(m, "STRONGEST-DISCOUNT-HALFLIGHT — top 3 strongest-thinking discounted") {
 		t.Errorf("strongest-discount label missing:\n%s", m)
 	}
 	for _, want := range []string{

@@ -33,7 +33,7 @@ func scoredResult() rank.Result {
 }
 
 func TestMessagesLayoutAndAlignment(t *testing.T) {
-	msgs := Messages(scoredResult(), []string{"openai/gpt-oss-120b:free"}, noon())
+	msgs := Messages(scoredResult(), noon())
 	if len(msgs) != 1 {
 		t.Fatalf("Messages() produced %d messages, want 1", len(msgs))
 	}
@@ -48,9 +48,6 @@ func TestMessagesLayoutAndAlignment(t *testing.T) {
 		noticePrefix + "429 rate limit, retries exhausted",
 		"1  deepseek/deepseek-chat      0.28→0.14  -50  68.2",
 		"2  qwen/qwen3-235b-a22b        0.18→0.09  -50   n/a",
-		"Free tier:",
-		":free models today — 1",
-		"openai/gpt-oss-120b:free",
 	} {
 		if !strings.Contains(m, want) {
 			t.Errorf("message missing %q:\n%s", want, m)
@@ -68,7 +65,7 @@ func TestMessagesLayoutAndAlignment(t *testing.T) {
 }
 
 func TestMessagesColumnAlignment(t *testing.T) {
-	msgs := Messages(scoredResult(), nil, noon())
+	msgs := Messages(scoredResult(), noon())
 	lines := strings.Split(msgs[0], "\n")
 	var data []string
 	for _, l := range lines {
@@ -95,7 +92,7 @@ func TestMessagesEscapesHTML(t *testing.T) {
 			{ModelID: "evil/<b>&amp;</b>", Price: 1, Was: 2, Pct: -50, Score: 1, Scored: true},
 		},
 	}}}
-	m := Messages(res, nil, noon())[0]
+	m := Messages(res, noon())[0]
 	if strings.Contains(m, "evil/<b>") {
 		t.Errorf("model name not escaped correctly:\n%s", m)
 	}
@@ -110,7 +107,7 @@ func TestMessagesModelTruncation(t *testing.T) {
 		Sector: rank.Math,
 		Rows:   []rank.Row{{ModelID: long, Price: 1, Was: 2, Pct: -50, Score: 1, Scored: true}},
 	}}}
-	m := Messages(res, nil, noon())[0]
+	m := Messages(res, noon())[0]
 	if !strings.Contains(m, "vendor/"+strings.Repeat("m", 16)+"…") {
 		t.Errorf("truncated model name missing:\n%s", m)
 	}
@@ -124,7 +121,7 @@ func TestMessagesModelTruncation(t *testing.T) {
 func TestMessagesGlobalErrorNotice(t *testing.T) {
 	res := scoredResult()
 	res.GlobalErr = "status 403: <forbidden> & key leaked"
-	msgs := Messages(res, nil, noon())
+	msgs := Messages(res, noon())
 	if !strings.Contains(msgs[0], noticePrefix+"status 403: &lt;forbidden&gt; &amp; key leaked") {
 		t.Errorf("global notice missing or unescaped:\n%s", msgs[0])
 	}
@@ -137,13 +134,12 @@ func TestMessagesSplitAboveLimit(t *testing.T) {
 			{Sector: rank.Math, Rows: manyRows()},
 			{Sector: rank.LCR, Rows: manyRows()},
 			{Sector: rank.Finance, Rows: manyRows()},
+			{Sector: rank.Math, Rows: manyRows()},
+			{Sector: rank.LCR, Rows: manyRows()},
+			{Sector: rank.Finance, Rows: manyRows()},
 		},
 	}
-	free := make([]string, 80)
-	for i := range free {
-		free[i] = "vendor/model-" + strings.Repeat("f", 12) + "-:free"
-	}
-	msgs := Messages(res, free, noon())
+	msgs := Messages(res, noon())
 	if len(msgs) < 2 {
 		t.Fatalf("Messages() produced %d messages, want >= 2 (split above limit)", len(msgs))
 	}
@@ -155,27 +151,14 @@ func TestMessagesSplitAboveLimit(t *testing.T) {
 			t.Errorf("message %d missing price-only notice:\n%s", i, m)
 		}
 	}
-	// the free-tier block must survive the split
-	found := false
-	for _, m := range msgs {
-		if strings.Contains(m, ":free models today — 80") {
-			found = true
-		}
-	}
-	if !found {
-		t.Error("free-tier block lost in split")
-	}
 }
 
 func TestNoDiscountsMessage(t *testing.T) {
-	m := NoDiscounts([]string{"openai/gpt-oss-120b:free"}, noon())
+	m := NoDiscounts(noon())
 	if !strings.Contains(m, "no discounts today.") {
 		t.Errorf("NoDiscounts() = %q, want short no-discount message", m)
 	}
-	if strings.Contains(m, "<pre>") && !strings.Contains(m, ":free models today — 1") {
-		t.Errorf("free block malformed:\n%s", m)
-	}
-	if strings.Count(m, "\n\n") > 2 {
+	if strings.Count(m, "\n\n") > 1 {
 		t.Errorf("message not short:\n%s", m)
 	}
 }
@@ -201,7 +184,7 @@ func TestCodeFreeTableLayout(t *testing.T) {
 			},
 		}},
 	}
-	msgs := Messages(res, nil, noon())
+	msgs := Messages(res, noon())
 	if len(msgs) != 1 {
 		t.Fatalf("Messages() produced %d messages, want 1", len(msgs))
 	}

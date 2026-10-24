@@ -54,9 +54,9 @@ func run() error {
 	prov := aa.New(hc, os.Getenv("AA_API_KEY"), ids)
 	res := rank.Rank(ctx, discs, free, prov)
 	if len(discs) == 0 {
-		return telegram.Send(ctx, hc, token, chatID, format.NoDiscounts(free, now))
+		return telegram.Send(ctx, hc, token, chatID, format.NoDiscounts(now))
 	}
-	for _, msg := range format.Messages(res, free, now) {
+	for _, msg := range format.Messages(res, now) {
 		if err := telegram.Send(ctx, hc, token, chatID, msg); err != nil {
 			return err
 		}

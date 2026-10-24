@@ -1,7 +1,7 @@
-// Package format renders the Telegram HTML message(s): a header, per-sector
-// top-10 tables, and the free-tier block. Any message above the limit is
-// split into one message per sector; every message is self-contained, so the
-// timestamp header and the global price-only notice repeat on each one.
+// Package format renders the Telegram HTML message(s): a header and per-sector
+// top-10 tables. Any message above the limit is split into one message per sector;
+// every message is self-contained, so the timestamp header and the global
+// price-only notice repeat on each one.
 package format
 
 import (
@@ -25,7 +25,6 @@ const (
 
 	headerTimeLayout = "2 Jan 2006 15:04 JST"
 	noticePrefix     = "⚠️ scored only by price — Artificial Analysis error: "
-	freeTitle        = "Free tier:"
 )
 
 var htmlEscaper = strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;")
@@ -34,9 +33,8 @@ var htmlEscaper = strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;")
 var jst = time.FixedZone("JST", 9*3600)
 
 // Messages renders one HTML message for the ranking, or one per sector when
-// the combined message would exceed the per-message limit. The free-tier
-// block rides the last message when it fits, its own message otherwise.
-func Messages(res rank.Result, free []string, now time.Time) []string {
+// the combined message would exceed the per-message limit.
+func Messages(res rank.Result, now time.Time) []string {
 	header := "🪙 OpenRouter discounts — " + now.In(jst).Format(headerTimeLayout)
 	start := func(b *strings.Builder) {
 		b.WriteString(header)
@@ -56,27 +54,15 @@ func Messages(res rank.Result, free []string, now time.Time) []string {
 		}
 		b.WriteString("\n\n" + block)
 	}
-	freeBlock := freeTierBlock(free)
-	if freeBlock != "" {
-		if b.Len() > 0 && b.Len()+2+len(freeBlock) > messageLimit {
-			msgs = append(msgs, b.String())
-			b.Reset()
-			start(&b)
-		}
-		b.WriteString("\n\n" + freeBlock)
-	}
 	msgs = append(msgs, b.String())
 	return msgs
 }
 
 // NoDiscounts renders the short message for a day with no active discounts.
-func NoDiscounts(free []string, now time.Time) string {
+func NoDiscounts(now time.Time) string {
 	var b strings.Builder
 	b.WriteString("🪙 OpenRouter discounts — " + now.In(jst).Format(headerTimeLayout))
 	b.WriteString("\n\nno discounts today.")
-	if block := freeTierBlock(free); block != "" {
-		b.WriteString("\n\n" + block)
-	}
 	return b.String()
 }
 
@@ -177,16 +163,4 @@ func pad(s string, width int, right bool) string {
 		return strings.Repeat(" ", n) + s
 	}
 	return s + strings.Repeat(" ", n)
-}
-
-func freeTierBlock(free []string) string {
-	if len(free) == 0 {
-		return ""
-	}
-	var b strings.Builder
-	b.WriteString(freeTitle + "\n<pre>\n")
-	fmt.Fprintf(&b, ":free models today — %d\n", len(free))
-	b.WriteString(htmlEscaper.Replace(strings.Join(free, ", ")))
-	b.WriteString("\n</pre>")
-	return b.String()
 }

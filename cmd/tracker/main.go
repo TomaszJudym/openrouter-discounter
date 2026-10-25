@@ -67,13 +67,15 @@ func run() error {
 	}
 	intelOK := err == nil
 	var sd rank.SectorResult
-	var sdVolition rank.SectorResult
+	var sdVolition, sdInlandEmpire, sdShivers rank.SectorResult
 	telegramSectors := res.Sectors
 	if intelOK {
 		sd = rank.SelectStrongestDiscount(models, discs, intel)
 		if len(sd.Rows) > 0 {
 			telegramSectors = append(telegramSectors, sd)
 			sdVolition = rank.SectorResult{Sector: rank.StrongestDiscountVolition, Rows: sd.Rows}
+			sdInlandEmpire = rank.SectorResult{Sector: rank.StrongestDiscountInlandEmpire, Rows: sd.Rows}
+			sdShivers = rank.SectorResult{Sector: rank.StrongestDiscountShivers, Rows: sd.Rows}
 		}
 	}
 	telegramRes := rank.Result{Sectors: telegramSectors, GlobalErr: res.GlobalErr}
@@ -84,7 +86,7 @@ func run() error {
 	}
 	sectors := append(res.Sectors, rank.SelectExpensiveLong(models, discs))
 	if intelOK && len(sd.Rows) > 0 {
-		sectors = append(sectors, sd, sdVolition)
+		sectors = append(sectors, sd, sdVolition, sdInlandEmpire, sdShivers)
 	}
 	updatePresets(ctx, hc, sectors)
 	return nil
@@ -93,10 +95,9 @@ func run() error {
 // updatePresets points each category's preset at its top 3 models: the
 // admech-* presets follow the discounted rankings; expensive-long follows
 // the strongest thinking frontier with discount-resorted order;
-// strongest-discount-halflight and strongest-discount-volition route to
-// the top-3 strongest-thinking discounted chat models (same models, distinct
-// personas). Failures are logged and non-fatal: the Telegram report is
-// the primary output.
+// strongest-discount-* presets route to the top-3 strongest-thinking
+// discounted chat models (same models, distinct personas). Failures are
+// logged and non-fatal: the Telegram report is the primary output.
 func updatePresets(ctx context.Context, hc *http.Client, sectors []rank.SectorResult) {
 	key := os.Getenv("OPENROUTER_API_KEY")
 	if key == "" {

@@ -411,6 +411,108 @@ func TestSystemPromptEmbedded(t *testing.T) {
 	}
 }
 
+func TestHalflightPromptEmbedded(t *testing.T) {
+	if !strings.Contains(halflightPrompt, "fight-or-flight response") {
+		t.Error("halflight prompt missing its persona description")
+	}
+}
+
+func TestVolitionPromptEmbedded(t *testing.T) {
+	if !strings.Contains(volitionPrompt, "willpower, resolve") {
+		t.Error("volition prompt missing its persona description")
+	}
+}
+
+func TestInlandEmpirePromptEmbedded(t *testing.T) {
+	if !strings.Contains(inlandempirePrompt, "unfiltered wellspring") {
+		t.Error("inlandempire prompt missing its persona description")
+	}
+}
+
+func TestShiversPromptEmbedded(t *testing.T) {
+	if !strings.Contains(shiversPrompt, "genius loci") {
+		t.Error("shivers prompt missing its persona description")
+	}
+}
+
+func strongestDiscountInlandEmpireRows() rank.SectorResult {
+	return rank.SectorResult{Sector: rank.StrongestDiscountInlandEmpire, Rows: []rank.Row{
+		{ModelID: "google/gemini-2.5-pro", Score: 89.2, Scored: true},
+		{ModelID: "openai/o3", Score: 87.5, Scored: true},
+		{ModelID: "anthropic/claude-opus-4", Score: 85.1, Scored: true},
+	}}
+}
+
+func TestStrongestDiscountInlandEmpirePostBody(t *testing.T) {
+	rec := &recorder{}
+	c := serverFor(t, rec, nil, http.StatusNotFound)
+	updated, err := c.Update(t.Context(), strongestDiscountInlandEmpireRows())
+	if err != nil {
+		t.Fatalf("Update() error = %v, want nil", err)
+	}
+	if !updated {
+		t.Error("Update() = false, want true (preset missing)")
+	}
+	if len(rec.postBodies) != 1 {
+		t.Fatalf("POST count = %d, want 1", len(rec.postBodies))
+	}
+	body := rec.postBodies[0]
+	msgs := body["messages"].([]any)
+	m0 := msgs[0].(map[string]any)
+	if m0["content"] != inlandempirePrompt {
+		t.Errorf("system prompt = %q, want inlandempire prompt", m0["content"])
+	}
+	reas := body["reasoning"].(map[string]any)
+	if reas["effort"] != "max" {
+		t.Errorf("reasoning.effort = %v, want max", reas["effort"])
+	}
+	if reas["enabled"] != true {
+		t.Errorf("reasoning.enabled = %v, want true", reas["enabled"])
+	}
+	if body["temperature"] != 1.15 {
+		t.Errorf("temperature = %v, want 1.15", body["temperature"])
+	}
+}
+
+func strongestDiscountShiversRows() rank.SectorResult {
+	return rank.SectorResult{Sector: rank.StrongestDiscountShivers, Rows: []rank.Row{
+		{ModelID: "google/gemini-2.5-pro", Score: 89.2, Scored: true},
+		{ModelID: "openai/o3", Score: 87.5, Scored: true},
+		{ModelID: "anthropic/claude-opus-4", Score: 85.1, Scored: true},
+	}}
+}
+
+func TestStrongestDiscountShiversPostBody(t *testing.T) {
+	rec := &recorder{}
+	c := serverFor(t, rec, nil, http.StatusNotFound)
+	updated, err := c.Update(t.Context(), strongestDiscountShiversRows())
+	if err != nil {
+		t.Fatalf("Update() error = %v, want nil", err)
+	}
+	if !updated {
+		t.Error("Update() = false, want true (preset missing)")
+	}
+	if len(rec.postBodies) != 1 {
+		t.Fatalf("POST count = %d, want 1", len(rec.postBodies))
+	}
+	body := rec.postBodies[0]
+	msgs := body["messages"].([]any)
+	m0 := msgs[0].(map[string]any)
+	if m0["content"] != shiversPrompt {
+		t.Errorf("system prompt = %q, want shivers prompt", m0["content"])
+	}
+	reas := body["reasoning"].(map[string]any)
+	if reas["effort"] != "max" {
+		t.Errorf("reasoning.effort = %v, want max", reas["effort"])
+	}
+	if reas["enabled"] != true {
+		t.Errorf("reasoning.enabled = %v, want true", reas["enabled"])
+	}
+	if body["temperature"] != 1.15 {
+		t.Errorf("temperature = %v, want 1.15", body["temperature"])
+	}
+}
+
 func fmtModels(v any) []string {
 	arr, _ := v.([]any)
 	out := make([]string, 0, len(arr))

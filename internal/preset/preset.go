@@ -25,8 +25,14 @@ var systemPromptFile string
 //go:embed halflight.txt
 var halflightPromptFile string
 
+//go:embed inlandempire.txt
+var inlandempirePromptFile string
+
 //go:embed volition.txt
 var volitionPromptFile string
+
+//go:embed shivers.txt
+var shiversPromptFile string
 
 // systemPrompt is the system instruction written into every preset version.
 var systemPrompt = strings.TrimSpace(systemPromptFile)
@@ -36,6 +42,12 @@ var halflightPrompt = strings.TrimSpace(halflightPromptFile)
 
 // volitionPrompt is the VOLITION persona used only for strongest-discount-volition.
 var volitionPrompt = strings.TrimSpace(volitionPromptFile)
+
+// inlandempirePrompt is the INLAND EMPIRE persona used only for strongest-discount-inlandempire.
+var inlandempirePrompt = strings.TrimSpace(inlandempirePromptFile)
+
+// shiversPrompt is the SHIVERS persona used only for strongest-discount-shivers.
+var shiversPrompt = strings.TrimSpace(shiversPromptFile)
 
 // verbosity is requested on every update even when the routed model does not
 // support it: the API stores it in the preset config, and frontier models
@@ -80,6 +92,24 @@ var specs = map[rank.Sector]presetSpec{
 		frequencyPenalty: 0.4,
 		presencePenalty:  0.4,
 	},
+	rank.StrongestDiscountInlandEmpire: {
+		systemPrompt:     inlandempirePrompt,
+		reasoningEnabled: true,
+		sampling:         true,
+		temperature:      1.15,
+		topP:             0.95,
+		frequencyPenalty: 0.4,
+		presencePenalty:  0.4,
+	},
+	rank.StrongestDiscountShivers: {
+		systemPrompt:     shiversPrompt,
+		reasoningEnabled: true,
+		sampling:         true,
+		temperature:      1.15,
+		topP:             0.95,
+		frequencyPenalty: 0.4,
+		presencePenalty:  0.4,
+	},
 }
 
 // Slugs maps ranked sectors to the user's preset slugs.
@@ -91,7 +121,9 @@ var Slugs = map[rank.Sector]string{
 	rank.CodeFree:                   "admech-code-free",
 	rank.ExpensiveLong:              "expensive-long",
 	rank.StrongestDiscountHalflight: "strongest-discount-halflight",
-	rank.StrongestDiscountVolition:  "strongest-discount-volition",
+	rank.StrongestDiscountVolition:     "strongest-discount-volition",
+	rank.StrongestDiscountInlandEmpire: "strongest-discount-inlandempire",
+	rank.StrongestDiscountShivers:      "strongest-discount-shivers",
 }
 
 // TopN is how many models each preset routes.

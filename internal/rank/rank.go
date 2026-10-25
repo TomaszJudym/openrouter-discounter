@@ -22,8 +22,10 @@ const (
 	Code                       Sector = "code"
 	CodeFree                   Sector = "code-free"
 	ExpensiveLong              Sector = "expensive-long"
-	StrongestDiscountHalflight Sector = "strongest-discount-halflight"
-	StrongestDiscountVolition  Sector = "strongest-discount-volition"
+	StrongestDiscountHalflight    Sector = "strongest-discount-halflight"
+	StrongestDiscountVolition     Sector = "strongest-discount-volition"
+	StrongestDiscountInlandEmpire Sector = "strongest-discount-inlandempire"
+	StrongestDiscountShivers      Sector = "strongest-discount-shivers"
 )
 
 // Label is the display header for the sector.
@@ -45,6 +47,10 @@ func (s Sector) Label() string {
 		return "STRONGEST-DISCOUNT-HALFLIGHT — top 3 strongest-thinking discounted"
 	case StrongestDiscountVolition:
 		return "STRONGEST-DISCOUNT-VOLITION — top 3 strongest-thinking discounted"
+	case StrongestDiscountInlandEmpire:
+		return "STRONGEST-DISCOUNT-INLANDEMPIRE — top 3 strongest-thinking discounted"
+	case StrongestDiscountShivers:
+		return "STRONGEST-DISCOUNT-SHIVERS — top 3 strongest-thinking discounted"
 	}
 	return string(s)
 }

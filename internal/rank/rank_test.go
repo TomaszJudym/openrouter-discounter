@@ -363,6 +363,75 @@ func TestSelectStrongestDiscountModelMissing(t *testing.T) {
 	}
 }
 
+func TestSelectFreeDiscoFiltersAndOrders(t *testing.T) {
+	models := []discounts.Model{
+		{ID: "a/free:free", Architecture: discounts.Architecture{OutputModalities: []string{"text"}}},
+		{ID: "b/paid", Architecture: discounts.Architecture{OutputModalities: []string{"text"}}},
+		{ID: "c/free:free", Architecture: discounts.Architecture{OutputModalities: []string{"text"}}},
+		{ID: "d/free:free", Architecture: discounts.Architecture{OutputModalities: []string{"image"}}},
+	}
+	freeIDs := []string{"a/free:free", "b/paid", "c/free:free", "d/free:free"}
+	intel := map[string]float64{
+		"a/free:free": 50.0,
+		"b/paid":      90.0, // not :free, should be excluded
+		"c/free:free": 70.0,
+		"d/free:free": 60.0,
+	}
+	got := SelectFreeDisco(freeIDs, models, intel)
+	if got.Sector != FreeHalflight {
+		t.Errorf("Sector = %s, want %s", got.Sector, FreeHalflight)
+	}
+	if len(got.Rows) != 2 {
+		t.Fatalf("Rows = %d, want 2 (only :free with text output)", len(got.Rows))
+	}
+	if got.Rows[0].ModelID != "c/free:free" || got.Rows[0].Score != 70.0 {
+		t.Errorf("Rows[0] = %+v, want c/free:free score 70", got.Rows[0])
+	}
+	if got.Rows[1].ModelID != "a/free:free" || got.Rows[1].Score != 50.0 {
+		t.Errorf("Rows[1] = %+v, want a/free:free score 50", got.Rows[1])
+	}
+}
+
+func TestSelectFreeDiscoCapsAtThree(t *testing.T) {
+	models := []discounts.Model{
+		{ID: "a/f1:free", Architecture: discounts.Architecture{}},
+		{ID: "b/f2:free", Architecture: discounts.Architecture{}},
+		{ID: "c/f3:free", Architecture: discounts.Architecture{}},
+		{ID: "d/f4:free", Architecture: discounts.Architecture{}},
+	}
+	freeIDs := []string{"a/f1:free", "b/f2:free", "c/f3:free", "d/f4:free"}
+	intel := map[string]float64{"a/f1:free": 10, "b/f2:free": 20, "c/f3:free": 30, "d/f4:free": 40}
+	got := SelectFreeDisco(freeIDs, models, intel)
+	if len(got.Rows) != 3 {
+		t.Errorf("Rows = %d, want 3", len(got.Rows))
+	}
+	wantIDs := []string{"d/f4:free", "c/f3:free", "b/f2:free"}
+	for i, w := range wantIDs {
+		if got.Rows[i].ModelID != w {
+			t.Errorf("Rows[%d] = %s, want %s", i, got.Rows[i].ModelID, w)
+		}
+	}
+}
+
+func TestSelectFreeDiscoEmptyIntel(t *testing.T) {
+	models := []discounts.Model{{ID: "a/f:free", Architecture: discounts.Architecture{}}}
+	freeIDs := []string{"a/f:free"}
+	got := SelectFreeDisco(freeIDs, models, nil)
+	if got.Rows != nil {
+		t.Errorf("Rows = %v, want nil (no intel scores)", got.Rows)
+	}
+}
+
+func TestSelectFreeDiscoModelMissing(t *testing.T) {
+	models := []discounts.Model{{ID: "other/model"}}
+	freeIDs := []string{"a/missing:free"}
+	intel := map[string]float64{"a/missing:free": 90}
+	got := SelectFreeDisco(freeIDs, models, intel)
+	if got.Rows != nil {
+		t.Errorf("Rows = %v, want nil (model not in catalog)", got.Rows)
+	}
+}
+
 func TestScoreModelsSinglePrice(t *testing.T) {
 	// All same price → all get priceScore 0, ordered by coding.
 	cands := []Candidate{

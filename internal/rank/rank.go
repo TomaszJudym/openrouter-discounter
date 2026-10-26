@@ -16,16 +16,20 @@ type Sector string
 
 // The ranked sectors, in report order.
 const (
-	Math                       Sector = "math"
-	LCR                        Sector = "long-context-reasoning"
-	Finance                    Sector = "finance"
-	Code                       Sector = "code"
-	CodeFree                   Sector = "code-free"
-	ExpensiveLong              Sector = "expensive-long"
+	Math                          Sector = "math"
+	LCR                           Sector = "long-context-reasoning"
+	Finance                       Sector = "finance"
+	Code                          Sector = "code"
+	CodeFree                      Sector = "code-free"
+	ExpensiveLong                 Sector = "expensive-long"
 	StrongestDiscountHalflight    Sector = "strongest-discount-halflight"
 	StrongestDiscountVolition     Sector = "strongest-discount-volition"
 	StrongestDiscountInlandEmpire Sector = "strongest-discount-inlandempire"
 	StrongestDiscountShivers      Sector = "strongest-discount-shivers"
+	FreeHalflight                 Sector = "free-halflight"
+	FreeVolition                  Sector = "free-volition"
+	FreeInlandEmpire              Sector = "free-inlandempire"
+	FreeShivers                   Sector = "free-shivers"
 )
 
 // Label is the display header for the sector.
@@ -51,6 +55,14 @@ func (s Sector) Label() string {
 		return "STRONGEST-DISCOUNT-INLANDEMPIRE — top 3 strongest-thinking discounted"
 	case StrongestDiscountShivers:
 		return "STRONGEST-DISCOUNT-SHIVERS — top 3 strongest-thinking discounted"
+	case FreeHalflight:
+		return "FREE-HALFLIGHT — top 3 free models (AA Intelligence Index)"
+	case FreeVolition:
+		return "FREE-VOLITION — top 3 free models (AA Intelligence Index)"
+	case FreeInlandEmpire:
+		return "FREE-INLANDEMPIRE — top 3 free models (AA Intelligence Index)"
+	case FreeShivers:
+		return "FREE-SHIVERS — top 3 free models (AA Intelligence Index)"
 	}
 	return string(s)
 }
@@ -181,6 +193,42 @@ func SelectStrongestDiscount(models []discounts.Model, discs []discounts.Discoun
 		rows = rows[:3]
 	}
 	return SectorResult{Sector: StrongestDiscountHalflight, Rows: rows}
+}
+
+// SelectFreeDisco returns the top 3 free models ranked by AA Intelligence
+// Index. Only models whose id ends in :free and have a positive intelligence
+// score are included. Order is strongest (highest score) to weakest, stable.
+func SelectFreeDisco(freeIDs []string, models []discounts.Model, intelligence map[string]float64) SectorResult {
+	if len(intelligence) == 0 {
+		return SectorResult{Sector: FreeHalflight}
+	}
+	catalog := make(map[string]discounts.Model, len(models))
+	for _, m := range models {
+		catalog[m.ID] = m
+	}
+	rows := make([]Row, 0, len(freeIDs))
+	for _, id := range freeIDs {
+		if !strings.HasSuffix(id, ":free") {
+			continue
+		}
+		m, ok := catalog[id]
+		if !ok || !m.ChatText() {
+			continue
+		}
+		score, ok := intelligence[id]
+		if !ok || score <= 0 {
+			continue
+		}
+		rows = append(rows, Row{ModelID: id, Score: score, Scored: true})
+	}
+	if len(rows) == 0 {
+		return SectorResult{Sector: FreeHalflight}
+	}
+	slices.SortStableFunc(rows, byScoreDesc)
+	if len(rows) > 3 {
+		rows = rows[:3]
+	}
+	return SectorResult{Sector: FreeHalflight, Rows: rows}
 }
 
 // Rank builds the per-sector top-10 rankings. With scores available, scored

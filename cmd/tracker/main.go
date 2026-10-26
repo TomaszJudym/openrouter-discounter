@@ -66,17 +66,10 @@ func run() error {
 		log.Printf("Intelligence fetch failed (skipping strongest-discount): %v", err)
 	}
 	intelOK := err == nil
-	var sd rank.SectorResult
-	var sdVolition, sdInlandEmpire, sdShivers rank.SectorResult
 	telegramSectors := res.Sectors
-	if intelOK {
-		sd = rank.SelectStrongestDiscount(models, discs, intel)
-		if len(sd.Rows) > 0 {
-			telegramSectors = append(telegramSectors, sd)
-			sdVolition = rank.SectorResult{Sector: rank.StrongestDiscountVolition, Rows: sd.Rows}
-			sdInlandEmpire = rank.SectorResult{Sector: rank.StrongestDiscountInlandEmpire, Rows: sd.Rows}
-			sdShivers = rank.SectorResult{Sector: rank.StrongestDiscountShivers, Rows: sd.Rows}
-		}
+	sdSectors, freeSectors := buildIntelSectors(models, discs, free, intel, intelOK)
+	if len(sdSectors) > 0 {
+		telegramSectors = append(telegramSectors, sdSectors[0])
 	}
 	telegramRes := rank.Result{Sectors: telegramSectors, GlobalErr: res.GlobalErr}
 	for _, msg := range format.Messages(telegramRes, now) {
@@ -85,11 +78,50 @@ func run() error {
 		}
 	}
 	sectors := append(res.Sectors, rank.SelectExpensiveLong(models, discs))
-	if intelOK && len(sd.Rows) > 0 {
-		sectors = append(sectors, sd, sdVolition, sdInlandEmpire, sdShivers)
+	if intelOK && len(sdSectors) > 0 {
+		sectors = append(sectors, sdSectors...)
+	}
+	if intelOK && len(freeSectors) > 0 {
+		sectors = append(sectors, freeSectors...)
 	}
 	updatePresets(ctx, hc, sectors)
 	return nil
+}
+
+// buildIntelSectors creates the strongest-discount and free-tier disco preset results
+// when intelligence scores are available. Returns the strongest-discount sectors first
+// (for Telegram) and free-tier sectors second (for presets only).
+func buildIntelSectors(models []discounts.Model, discs []discounts.Discount, freeIDs []string, intel map[string]float64, intelOK bool) (sdSectors, freeSectors []rank.SectorResult) {
+	if !intelOK {
+		return nil, nil
+	}
+	sd := rank.SelectStrongestDiscount(models, discs, intel)
+	if len(sd.Rows) > 0 {
+		sdSectors = []rank.SectorResult{
+			sd,
+			{Sector: rank.StrongestDiscountVolition, Rows: sd.Rows},
+			{Sector: rank.StrongestDiscountInlandEmpire, Rows: sd.Rows},
+			{Sector: rank.StrongestDiscountShivers, Rows: sd.Rows},
+		}
+	}
+	freeSectors = buildFreeDiscoSectors(freeIDs, models, intel)
+	return sdSectors, freeSectors
+}
+
+// buildFreeDiscoSectors creates the four free-tier disco preset results from the
+// top 3 free models ranked by AA Intelligence Index. All four personas share the
+// same model list.
+func buildFreeDiscoSectors(freeIDs []string, models []discounts.Model, intel map[string]float64) []rank.SectorResult {
+	base := rank.SelectFreeDisco(freeIDs, models, intel)
+	if len(base.Rows) == 0 {
+		return nil
+	}
+	return []rank.SectorResult{
+		base,
+		{Sector: rank.FreeVolition, Rows: base.Rows},
+		{Sector: rank.FreeInlandEmpire, Rows: base.Rows},
+		{Sector: rank.FreeShivers, Rows: base.Rows},
+	}
 }
 
 // updatePresets points each category's preset at its top 3 models: the

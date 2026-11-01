@@ -9,7 +9,7 @@ tracker (GitHub Actions, daily 07:00 JST)
   │
   │ GET  openrouter.ai/api/v1/models                    ← catalog, base prices
   │ GET  openrouter.ai/api/v1/models/{slug}/endpoints   ← per-provider pricing → discounts
-  │ GET  artificialanalysis.ai/api/v2/data/llms/models  ← benchmark scores
+  │ GET  artificialanalysis.ai/api/v2/language/models  ← benchmark scores
   ▼
 rank top 10 per category (math, long-context, finance, code)
   │
@@ -44,7 +44,7 @@ final = 0.65 × benchmark + 0.35 × (−Δ%)
 The benchmark counts ~2× the price. Prices are USD per Mtok prompt; Δ% is
 the discount vs the provider's list price. Top 10 per category are sent.
 Unscored models rank last, by discount. Source repos: OpenRouter
-`/models/{slug}/endpoints` pricing and `artificialanalysis.ai/api/v2/data/llms/models`.
+`/models/{slug}/endpoints` pricing and `artificialanalysis.ai/api/v2/language/models`.
 
 ## Preset updates
 
@@ -59,7 +59,7 @@ independent of discounts. `strongest-discount` routes to the top-3 strongest-thi
 prompt with reasoning effort max and verbosity low, and adds sampling settings
 (temperature 1.15, top_p 0.95, frequency_penalty 0.4, presence_penalty 0.4) for more
 varied, less mechanical replies than the other presets.
-(`artificial_analysis_math_index`, `lcr`, `tau_banking`,
+(`scicode` / AA Math Index proxy, `aa_lcr`, `tau_banking`,
 `artificial_analysis_coding_index`). Unscored models are skipped; if none of
 a category's models scored, that preset is left untouched.
 

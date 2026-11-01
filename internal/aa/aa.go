@@ -17,7 +17,7 @@ import (
 )
 
 // baseURL is the Artificial Analysis data API endpoint.
-const baseURL = "https://artificialanalysis.ai/api/v2/data/llms/models"
+const baseURL = "https://artificialanalysis.ai/api/v2/language/models"
 
 const (
 	maxBodyBytes  = 16 << 20
@@ -30,8 +30,8 @@ const (
 const fracToPct = 100
 
 type evaluations struct {
-	ArtificialAnalysisMathIndex         float64 `json:"artificial_analysis_math_index"`
-	LCR                                 float64 `json:"lcr"`
+	ArtificialAnalysisMathIndex         float64 `json:"scicode"`
+	LCR                                 float64 `json:"aa_lcr"`
 	TauBanking                          float64 `json:"tau_banking"`
 	CodingIndex                         float64 `json:"artificial_analysis_coding_index"`
 	ArtificialAnalysisIntelligenceIndex float64 `json:"artificial_analysis_intelligence_index"`
@@ -46,6 +46,7 @@ type model struct {
 }
 
 type creator struct {
+	Name string `json:"name"`
 	Slug string `json:"slug"`
 }
 
@@ -98,6 +99,9 @@ func (p *Provider) Scores(ctx context.Context) (map[rank.Sector]map[string]float
 		if !ok {
 			id, ok = matches[normalize(m.Creator.Slug+"-"+m.Slug)]
 		}
+		if !ok && m.Creator.Name != "" {
+			id, ok = matches[normalize(m.Creator.Name+"-"+m.Slug)]
+		}
 		if !ok {
 			continue
 		}
@@ -122,6 +126,24 @@ func (p *Provider) Scores(ctx context.Context) (map[rank.Sector]map[string]float
 // OpenRouter model ids. When an AA slug ends with "-thinking", that suffix is
 // stripped before matching; a thinking-variant entry takes precedence over a
 // base entry for the same OpenRouter id. Values <= 0 or null are omitted.
+func findMatch(matches map[string]string, m model, slug string) (string, bool) {
+	id, ok := matches[normalize(slug)]
+	if !ok {
+		id, ok = matches[normalize(m.Name)]
+	}
+	if !ok {
+		id, ok = matches[normalize(m.Creator.Slug+"-"+slug)]
+	}
+	if !ok && m.Creator.Name != "" {
+		id, ok = matches[normalize(m.Creator.Name+"-"+slug)]
+	}
+	return id, ok
+}
+
+// Intelligence returns the Artificial Analysis Intelligence Index mapped to
+// OpenRouter model ids. When an AA slug ends with "-thinking", that suffix is
+// stripped before matching; a thinking-variant entry takes precedence over a
+// base entry for the same OpenRouter id. Values <= 0 or null are omitted.
 func (p *Provider) Intelligence(ctx context.Context) (map[string]float64, error) {
 	if err := p.fetch(ctx); err != nil {
 		return nil, err
@@ -134,13 +156,7 @@ func (p *Provider) Intelligence(ctx context.Context) (map[string]float64, error)
 		if strings.HasSuffix(slug, "-thinking") {
 			continue
 		}
-		id, ok := matches[normalize(slug)]
-		if !ok {
-			id, ok = matches[normalize(m.Name)]
-		}
-		if !ok {
-			id, ok = matches[normalize(m.Creator.Slug+"-"+slug)]
-		}
+		id, ok := findMatch(matches, m, slug)
 		if !ok {
 			continue
 		}
@@ -155,13 +171,7 @@ func (p *Provider) Intelligence(ctx context.Context) (map[string]float64, error)
 			continue
 		}
 		baseSlug := strings.TrimSuffix(slug, "-thinking")
-		id, ok := matches[normalize(baseSlug)]
-		if !ok {
-			id, ok = matches[normalize(m.Name)]
-		}
-		if !ok {
-			id, ok = matches[normalize(m.Creator.Slug+"-"+baseSlug)]
-		}
+		id, ok := findMatch(matches, m, baseSlug)
 		if !ok {
 			continue
 		}

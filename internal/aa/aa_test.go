@@ -11,13 +11,13 @@ import (
 	"github.com/tomaszjudym/openrouter-discounter/internal/rank"
 )
 
-const aaPayload = `{"status":200,"data":[
- {"id":"1","name":"Model A","slug":"model-a","model_creator":{"slug":"vendor-a"},
-  "evaluations":{"artificial_analysis_math_index":68.25,"lcr":0.8533,"tau_banking":0.4722,"artificial_analysis_coding_index":71.4}},
- {"id":"2","name":"Model B","slug":"model-b","model_creator":{"slug":"vendor-b"},
-  "evaluations":{"artificial_analysis_math_index":55.0}},
- {"id":"3","name":"Unrelated Model","slug":"other-model","model_creator":{"slug":"vendor-c"},
-  "evaluations":{"lcr":0.9}}
+const aaPayload = `{"tier":"pro","data":[
+ {"id":"1","name":"Model A","slug":"model-a","model_creator":{"name":"Vendor-A"},
+  "evaluations":{"scicode":68.25,"aa_lcr":0.8533,"tau_banking":0.4722,"artificial_analysis_coding_index":71.4}},
+ {"id":"2","name":"Model B","slug":"model-b","model_creator":{"name":"Vendor-B"},
+  "evaluations":{"scicode":55.0}},
+ {"id":"3","name":"Unrelated Model","slug":"other-model","model_creator":{"name":"Vendor-C"},
+  "evaluations":{"aa_lcr":0.9}}
 ]}`
 
 func providerFor(t *testing.T, body string, status int, orIDs []string) (*Provider, *httptest.Server) {
@@ -248,8 +248,8 @@ func TestResponseDecode(t *testing.T) {
 	if err := json.Unmarshal([]byte(aaPayload), &r); err != nil {
 		t.Fatalf("Unmarshal error = %v, want nil", err)
 	}
-	if r.Status != 200 || len(r.Data) != 3 {
-		t.Errorf("decoded status/data = %d/%d, want 200/3", r.Status, len(r.Data))
+	if r.Status != 0 || len(r.Data) != 3 {
+		t.Errorf("decoded status/data = %d/%d, want 0/3", r.Status, len(r.Data))
 	}
 }
 

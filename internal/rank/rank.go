@@ -232,9 +232,27 @@ func SelectStrongestDiscount(models []discounts.Model, discs []discounts.Discoun
 	return SectorResult{Sector: StrongestDiscountHalflight, Rows: rows}
 }
 
+// harnessOnly lists :free endpoints restricted to agentic harnesses: they
+// reject OpenRouter web-chat use, so free presets must not route to them.
+// The API carries no flag for this; the source is the model page's
+// warning_message ("only available for use with agentic harnesses"),
+// verified 2026-11-04.
+var harnessOnly = map[string]struct{}{
+	"thinkingmachines/inkling:free":       {},
+	"thinkingmachines/inkling-small:free": {},
+}
+
+// HarnessOnly reports whether a :free model is restricted to agentic
+// harnesses and unusable from the OpenRouter web chat.
+func HarnessOnly(id string) bool {
+	_, ok := harnessOnly[id]
+	return ok
+}
+
 // SelectFreeDisco returns the top 3 free models ranked by AA Intelligence
-// Index. Only models whose id ends in :free and have a positive intelligence
-// score are included. Order is strongest (highest score) to weakest, stable.
+// Index. Only models whose id ends in :free, are usable from web chat, and
+// have a positive intelligence score are included. Order is strongest
+// (highest score) to weakest, stable.
 func SelectFreeDisco(freeIDs []string, models []discounts.Model, intelligence map[string]float64) SectorResult {
 	if len(intelligence) == 0 {
 		return SectorResult{Sector: FreeHalflight}
@@ -245,7 +263,7 @@ func SelectFreeDisco(freeIDs []string, models []discounts.Model, intelligence ma
 	}
 	rows := make([]Row, 0, len(freeIDs))
 	for _, id := range freeIDs {
-		if !strings.HasSuffix(id, ":free") {
+		if !strings.HasSuffix(id, ":free") || HarnessOnly(id) {
 			continue
 		}
 		m, ok := catalog[id]
@@ -326,6 +344,9 @@ func discountRows(discs []discounts.Discount, byModel map[string]float64) []Row 
 func freeRows(freeIDs []string, byModel map[string]float64) []Row {
 	rows := make([]Row, 0, len(freeIDs))
 	for _, id := range freeIDs {
+		if HarnessOnly(id) {
+			continue
+		}
 		row := Row{ModelID: id}
 		if s, ok := byModel[id]; ok {
 			row.Score, row.Scored = s, true

@@ -81,13 +81,20 @@ With `OPENROUTER_API_KEY` set, each run also repoints the OpenRouter presets
 composite ranking as the report (0.65 benchmark + 0.35 discount), scored on
 the category's score. `expensive-long` routes the 3 strongest
 thinking frontier models (catalog AA Intelligence Index, discount-resorted),
-independent of discounts. `strongest-discount` routes to the top-3 strongest-thinking
+independent of discounts. `strongest-discount-half-light` routes to the top-3 strongest-thinking
 (catalog AA Intelligence Index) discounted chat models, carries the HALF-LIGHT persona
 prompt with reasoning effort max and verbosity low, and adds sampling settings
 (temperature 1.15, top_p 0.95, frequency_penalty 0.4, presence_penalty 0.4) for more
 varied, less mechanical replies than the other presets.
 Unscored models are skipped; if none of a category's models scored, that
 preset is left untouched.
+
+Free presets (`admech-code-free`, `*-free` personas) skip `:free` endpoints
+restricted to agentic harnesses, which fail in the OpenRouter web chat. The
+API exposes no flag for this; the denylist `harnessOnly` in
+`internal/rank/rank.go` is curated from each model page's warning
+("only available for use with agentic harnesses") and needs a manual update
+when OpenRouter adds such endpoints.
 
 Each update POSTs the new model list plus the shared system prompt and
 `verbosity: low` to `api/v1/presets/{slug}/chat/completions`, which creates

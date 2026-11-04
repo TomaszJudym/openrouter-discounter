@@ -446,6 +446,28 @@ func TestSelectFreeDiscoFiltersAndOrders(t *testing.T) {
 	}
 }
 
+func TestFreeSectorsSkipHarnessOnly(t *testing.T) {
+	const harness = "thinkingmachines/inkling:free"
+	models := []discounts.Model{{ID: harness}, {ID: "a/chat:free"}}
+	freeIDs := []string{harness, "a/chat:free"}
+	scores := map[string]float64{harness: 99, "a/chat:free": 10}
+
+	got := SelectFreeDisco(freeIDs, models, scores)
+	if len(got.Rows) != 1 || got.Rows[0].ModelID != "a/chat:free" {
+		t.Errorf("SelectFreeDisco rows = %+v, want only a/chat:free", got.Rows)
+	}
+
+	res := Rank(t.Context(), nil, freeIDs, fakeProvider{scores: map[Sector]map[string]float64{CodeFree: scores}})
+	for _, sr := range res.Sectors {
+		if sr.Sector != CodeFree {
+			continue
+		}
+		if len(sr.Rows) != 1 || sr.Rows[0].ModelID != "a/chat:free" {
+			t.Errorf("CodeFree rows = %+v, want only a/chat:free", sr.Rows)
+		}
+	}
+}
+
 func TestSelectFreeDiscoCapsAtThree(t *testing.T) {
 	models := []discounts.Model{
 		{ID: "a/f1:free", Architecture: discounts.Architecture{}},

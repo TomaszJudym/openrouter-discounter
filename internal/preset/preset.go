@@ -156,7 +156,7 @@ var Slugs = map[rank.Sector]string{
 	rank.Code:                          "admech-code",
 	rank.CodeFree:                      "admech-code-free",
 	rank.ExpensiveLong:                 "expensive-long",
-	rank.StrongestDiscountHalflight:    "strongest-discount-halflight",
+	rank.StrongestDiscountHalflight:    "strongest-discount-half-light",
 	rank.StrongestDiscountVolition:     "strongest-discount-volition",
 	rank.StrongestDiscountInlandEmpire: "strongest-discount-inlandempire",
 	rank.StrongestDiscountShivers:      "strongest-discount-shivers",

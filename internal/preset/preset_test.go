@@ -78,8 +78,8 @@ func TestSlugsCoverAllSectors(t *testing.T) {
 	for _, sec := range rank.Sectors {
 		switch sec {
 		case rank.StrongestDiscountHalflight:
-			if got := Slugs[sec]; got != "strongest-discount-halflight" {
-				t.Errorf("Slugs[%s] = %q, want strongest-discount-halflight", sec, got)
+			if got := Slugs[sec]; got != "strongest-discount-half-light" {
+				t.Errorf("Slugs[%s] = %q, want strongest-discount-half-light", sec, got)
 			}
 		default:
 			if got := Slugs[sec]; !strings.HasPrefix(got, "admech-") && got != "expensive-long" {

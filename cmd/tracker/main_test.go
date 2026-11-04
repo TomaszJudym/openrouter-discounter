@@ -13,7 +13,7 @@ func TestIntelligenceVariantsInheritBase(t *testing.T) {
 		return m
 	}
 	got := intelligence([]discounts.Model{
-		mk("v/a", 50), mk("v/a:free", 0), mk("v/b:free", 30), mk("v/c", 0),
+		mk("v/a", 50), mk("v/a:free", 0), mk("v/a:thinking", 0), mk("v/b:free", 30), mk("v/c", 0),
 	})
 	want := map[string]float64{"v/a": 50, "v/a:free": 50, "v/b:free": 30}
 	if len(got) != len(want) {

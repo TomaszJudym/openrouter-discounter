@@ -7,6 +7,7 @@ import (
 	"context"
 	"slices"
 	"strings"
+	"sync"
 
 	"github.com/tomaszjudym/openrouter-discounter/internal/discounts"
 )
@@ -111,15 +112,22 @@ type Provider interface {
 	Scores(ctx context.Context) map[Sector]SectorScores
 }
 
-// Providers combines several sources into one Provider. When two sources
-// cover the same sector, the first one listed wins.
+// Providers combines several sources into one Provider. The sources are
+// fetched concurrently, so wall time is bounded by the slowest one. When two
+// sources cover the same sector, the first one listed wins.
 type Providers []Provider
 
 // Scores implements Provider.
 func (ps Providers) Scores(ctx context.Context) map[Sector]SectorScores {
+	results := make([]map[Sector]SectorScores, len(ps))
+	var wg sync.WaitGroup
+	for i, p := range ps {
+		wg.Go(func() { results[i] = p.Scores(ctx) })
+	}
+	wg.Wait()
 	out := make(map[Sector]SectorScores)
-	for _, p := range ps {
-		for sec, sc := range p.Scores(ctx) {
+	for _, r := range results {
+		for sec, sc := range r {
 			if _, ok := out[sec]; !ok {
 				out[sec] = sc
 			}
@@ -132,8 +140,9 @@ func (ps Providers) Scores(ctx context.Context) map[Sector]SectorScores {
 // no usable scores. It contains no secrets.
 const noScoresMessage = "no scores returned for this sector"
 
-// noSourceName labels the notice of a sector no provider covers.
-const noSourceName = "score source"
+// NoSourceName labels the notice of a sector no provider covers, or whose
+// provider named no source.
+const NoSourceName = "score source"
 
 // Result is the full ranking.
 type Result struct {
@@ -290,7 +299,7 @@ func sectorBase(sec Sector, scores map[Sector]SectorScores) (SectorResult, map[s
 	sr := SectorResult{Sector: sec, Source: sc.Source}
 	switch {
 	case !ok:
-		sr.Source, sr.Err = noSourceName, noScoresMessage
+		sr.Source, sr.Err = NoSourceName, noScoresMessage
 	case sc.Err != "":
 		sr.Err = sc.Err
 	case len(sc.ByModel) == 0:

@@ -55,6 +55,20 @@ func TestGetSendsHeaderAndRedacts(t *testing.T) {
 	}
 }
 
+func TestGetRejectsOversizeBody(t *testing.T) {
+	srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(strings.Repeat("x", 11)))
+	}))
+	g := Getter{HC: srv.Client(), Attempts: 1, MaxBytes: 10}
+	if _, err := g.Get(t.Context(), srv.URL, nil, ""); err == nil || !strings.Contains(err.Error(), "exceeds 10 bytes") {
+		t.Errorf("err = %v, want size error", err)
+	}
+	g.MaxBytes = 11
+	if body, err := g.Get(t.Context(), srv.URL, nil, ""); err != nil || len(body) != 11 {
+		t.Errorf("Get at limit = %d bytes, %v; want 11, nil", len(body), err)
+	}
+}
+
 func TestSanitizeTruncates(t *testing.T) {
 	got := Sanitize(strings.Repeat("é", 200), "")
 	if n := utf8.RuneCountInString(got); n != MaxErrRunes || !strings.HasSuffix(got, "…") {

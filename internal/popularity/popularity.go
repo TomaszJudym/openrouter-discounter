@@ -36,18 +36,20 @@ type response struct {
 }
 
 // Provider maps ranking rows to catalog ids via canonical_slug + variant.
+// Several ids (e.g. a "~…-latest" alias and its concrete model) can share
+// one key; each of them gets the row's tokens.
 type Provider struct {
 	get    fetch.Getter
 	url    string
 	sector rank.Sector
-	ids    map[key]string
+	ids    map[key][]string
 }
 
 type key struct{ slug, variant string }
 
 // New builds a provider scoring sector from the catalog models.
 func New(g fetch.Getter, models []discounts.Model, sector rank.Sector) *Provider {
-	ids := make(map[key]string, len(models))
+	ids := make(map[key][]string, len(models))
 	for _, m := range models {
 		if m.CanonicalSlug == "" {
 			continue
@@ -56,7 +58,8 @@ func New(g fetch.Getter, models []discounts.Model, sector rank.Sector) *Provider
 		if _, v, ok := strings.Cut(m.ID, ":"); ok {
 			variant = v
 		}
-		ids[key{m.CanonicalSlug, variant}] = m.ID
+		k := key{m.CanonicalSlug, variant}
+		ids[k] = append(ids[k], m.ID)
 	}
 	return &Provider{get: g, url: RankingsURL, sector: sector, ids: ids}
 }
@@ -83,15 +86,14 @@ func (p *Provider) tokens(ctx context.Context) (map[string]float64, error) {
 	}
 	out := make(map[string]float64)
 	for _, rw := range r.Data {
-		id, ok := p.ids[key{rw.Permaslug, rw.Variant}]
-		if !ok {
-			continue
-		}
 		v := rw.Metric
 		if v <= 0 {
 			v = rw.Prompt + rw.Completion
 		}
-		if v > 0 {
+		if v <= 0 {
+			continue
+		}
+		for _, id := range p.ids[key{rw.Permaslug, rw.Variant}] {
 			out[id] += v
 		}
 	}

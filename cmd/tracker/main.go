@@ -24,6 +24,15 @@ import (
 	"github.com/tomaszjudym/openrouter-discounter/internal/telegram"
 )
 
+// Deadlines. Score sources run concurrently under scoreTimeout, so one
+// hanging source cannot eat the run; each Telegram send has sendTimeout of
+// its own.
+const (
+	runTimeout   = 5 * time.Minute
+	scoreTimeout = 90 * time.Second
+	sendTimeout  = 60 * time.Second
+)
+
 func main() {
 	if err := run(); err != nil {
 		log.Fatalf("tracker: %v", err)
@@ -36,7 +45,7 @@ func run() error {
 	if token == "" || chatID == "" {
 		return errors.New("TELEGRAM_BOT_TOKEN and TELEGRAM_CHANNEL_ID are required")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), runTimeout)
 	defer cancel()
 	hc := &http.Client{Timeout: 60 * time.Second}
 	now := time.Now()
@@ -51,8 +60,15 @@ func run() error {
 		// are simply missing from the report
 		log.Printf("endpoint fetch failures (continuing): %v", err)
 	}
+	// The Telegram send gets its own deadline: slow fetches before it must
+	// not cost the day's report.
+	send := func(msg string) error {
+		sctx, scancel := context.WithTimeout(context.Background(), sendTimeout)
+		defer scancel()
+		return telegram.Send(sctx, hc, token, chatID, msg)
+	}
 	if len(discs) == 0 {
-		return telegram.Send(ctx, hc, token, chatID, format.NoDiscounts(now))
+		return send(format.NoDiscounts(now))
 	}
 	res := rankSectors(ctx, hc, models, discs, free)
 	// The halflight sector is shown in Telegram; all strongest-discount
@@ -69,7 +85,7 @@ func run() error {
 	}
 	telegramRes := rank.Result{Sectors: telegramSectors}
 	for _, msg := range format.Messages(telegramRes, now) {
-		if err := telegram.Send(ctx, hc, token, chatID, msg); err != nil {
+		if err := send(msg); err != nil {
 			return err
 		}
 	}
@@ -92,6 +108,8 @@ func rankSectors(ctx context.Context, hc *http.Client, models []discounts.Model,
 	for i, m := range models {
 		ids[i] = m.ID
 	}
+	ctx, cancel := context.WithTimeout(ctx, scoreTimeout)
+	defer cancel()
 	g := fetch.Getter{HC: hc}
 	prov := rank.Providers{
 		epoch.New(g, ids),
@@ -108,8 +126,10 @@ func rankSectors(ctx context.Context, hc *http.Client, models []discounts.Model,
 }
 
 // intelligence maps catalog ids to the AA Intelligence Index that the
-// OpenRouter catalog carries (benchmarks.artificial_analysis). Variants
-// (":free", ":batch") without their own value inherit the base model's.
+// OpenRouter catalog carries (benchmarks.artificial_analysis). A ":free" id
+// without its own value inherits the base model's; other variants
+// (":thinking", ":exacto", …) do not, so they cannot duplicate the base
+// model in the strongest-discount top 3.
 func intelligence(models []discounts.Model) map[string]float64 {
 	out := make(map[string]float64, len(models))
 	for _, m := range models {
@@ -121,7 +141,7 @@ func intelligence(models []discounts.Model) map[string]float64 {
 		if _, ok := out[m.ID]; ok {
 			continue
 		}
-		if base, _, ok := strings.Cut(m.ID, ":"); ok {
+		if base, ok := strings.CutSuffix(m.ID, ":free"); ok {
 			if v, ok := out[base]; ok {
 				out[m.ID] = v
 			}

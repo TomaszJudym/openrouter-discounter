@@ -63,11 +63,14 @@ func (g Getter) Get(ctx context.Context, target string, hdr http.Header, secret 
 			lastErr = err
 			continue
 		}
-		body, readErr := io.ReadAll(io.LimitReader(resp.Body, maxBytes))
+		body, readErr := io.ReadAll(io.LimitReader(resp.Body, maxBytes+1))
 		_ = resp.Body.Close() // read path: a close error is not actionable
 		switch {
 		case readErr != nil:
 			lastErr = fmt.Errorf("read response: %w", readErr)
+		case resp.StatusCode == http.StatusOK && int64(len(body)) > maxBytes:
+			// a cut-off body would fail later with a misleading parse error
+			return nil, fmt.Errorf("response exceeds %d bytes", maxBytes)
 		case resp.StatusCode == http.StatusOK:
 			return body, nil
 		case resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500:

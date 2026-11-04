@@ -76,7 +76,7 @@ func sectorBlock(sr rank.SectorResult) string {
 // <err>". Source and error text are HTML-escaped.
 func notice(source, errText string) string {
 	if source == "" {
-		source = "score source"
+		source = rank.NoSourceName
 	}
 	return noticePrefix + htmlEscaper.Replace(source) + " error: " + htmlEscaper.Replace(errText)
 }

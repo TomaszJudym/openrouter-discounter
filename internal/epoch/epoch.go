@@ -119,22 +119,11 @@ type record struct {
 // readCSV returns the (model, value) pairs of file; rows with an empty or
 // non-numeric value are skipped.
 func readCSV(zr *zip.Reader, file, col string) ([]record, error) {
-	var zf *zip.File
-	for _, f := range zr.File {
-		if path.Base(f.Name) == file {
-			zf = f
-			break
-		}
-	}
-	if zf == nil {
-		return nil, fmt.Errorf("%s missing from zip", file)
-	}
-	rc, err := zf.Open()
+	data, err := readFile(zr, file)
 	if err != nil {
-		return nil, fmt.Errorf("open %s: %w", file, err)
+		return nil, err
 	}
-	defer func() { _ = rc.Close() }() // read path: a close error is not actionable
-	cr := csv.NewReader(io.LimitReader(rc, maxCSVSize))
+	cr := csv.NewReader(bytes.NewReader(data))
 	cr.FieldsPerRecord = -1
 	cr.LazyQuotes = true
 	rows, err := cr.ReadAll()
@@ -160,6 +149,34 @@ func readCSV(zr *zip.Reader, file, col string) ([]record, error) {
 		recs = append(recs, record{model: row[mi], value: v})
 	}
 	return recs, nil
+}
+
+// readFile returns the bytes of the zip entry whose base name is file,
+// refusing entries above maxCSVSize rather than parsing a cut-off file.
+func readFile(zr *zip.Reader, file string) ([]byte, error) {
+	var zf *zip.File
+	for _, f := range zr.File {
+		if path.Base(f.Name) == file {
+			zf = f
+			break
+		}
+	}
+	if zf == nil {
+		return nil, fmt.Errorf("%s missing from zip", file)
+	}
+	rc, err := zf.Open()
+	if err != nil {
+		return nil, fmt.Errorf("open %s: %w", file, err)
+	}
+	defer func() { _ = rc.Close() }() // read path: a close error is not actionable
+	data, err := io.ReadAll(io.LimitReader(rc, maxCSVSize+1))
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", file, err)
+	}
+	if len(data) > maxCSVSize {
+		return nil, fmt.Errorf("%s exceeds %d bytes", file, maxCSVSize)
+	}
+	return data, nil
 }
 
 func index(header []string, name string) int {

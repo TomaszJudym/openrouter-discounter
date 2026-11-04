@@ -25,6 +25,7 @@ var models = []discounts.Model{
 	{ID: "v/big", CanonicalSlug: "v/big-20261001"},
 	{ID: "v/big:free", CanonicalSlug: "v/big-20261001"},
 	{ID: "v/mid", CanonicalSlug: "v/mid-20261001"},
+	{ID: "~v/mid-latest", CanonicalSlug: "v/mid-20261001"},
 	{ID: "v/quiet", CanonicalSlug: "v/quiet-20261001"},
 }
 
@@ -45,7 +46,8 @@ func TestScoresSumsWindowAndLogScales(t *testing.T) {
 		t.Fatalf("LCR = %+v, want no error", got)
 	}
 	// tokens: big 1e6, big:free 1e3 (prompt+completion fallback), mid 10^4.5
-	want := map[string]float64{"v/big": 100, "v/big:free": 0, "v/mid": 50}
+	// the ~alias shares v/mid's canonical slug and gets the same score
+	want := map[string]float64{"v/big": 100, "v/big:free": 0, "v/mid": 50, "~v/mid-latest": 50}
 	if len(got.ByModel) != len(want) {
 		t.Errorf("ByModel = %v, want %v", got.ByModel, want)
 	}

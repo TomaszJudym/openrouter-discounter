@@ -2,7 +2,9 @@ package rank
 
 import (
 	"context"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/tomaszjudym/openrouter-discounter/internal/discounts"
 )
@@ -204,11 +206,41 @@ func TestProvidersMergeFirstWins(t *testing.T) {
 	}
 }
 
+// barrierProvider blocks until every barrier provider has started, so
+// Providers.Scores only returns if it runs them concurrently.
+type barrierProvider struct {
+	started *sync.WaitGroup
+	sector  Sector
+}
+
+func (b barrierProvider) Scores(context.Context) map[Sector]SectorScores {
+	b.started.Done()
+	b.started.Wait()
+	return map[Sector]SectorScores{b.sector: {Source: src, ByModel: map[string]float64{"a/model-a": 1}}}
+}
+
+func TestProvidersRunConcurrently(t *testing.T) {
+	var started sync.WaitGroup
+	started.Add(2)
+	done := make(chan map[Sector]SectorScores, 1)
+	go func() {
+		done <- Providers{barrierProvider{&started, Math}, barrierProvider{&started, Code}}.Scores(t.Context())
+	}()
+	select {
+	case got := <-done:
+		if len(got) != 2 {
+			t.Errorf("sectors = %d, want 2", len(got))
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Providers.Scores ran sources sequentially (deadlock)")
+	}
+}
+
 func TestRankUncoveredSectorNotice(t *testing.T) {
 	res := Rank(t.Context(), discs(), nil, Providers{})
 	for _, sr := range res.Sectors {
-		if sr.Err != noScoresMessage || sr.Source != noSourceName {
-			t.Errorf("%s Err/Source = %q/%q, want %q/%q", sr.Sector, sr.Err, sr.Source, noScoresMessage, noSourceName)
+		if sr.Err != noScoresMessage || sr.Source != NoSourceName {
+			t.Errorf("%s Err/Source = %q/%q, want %q/%q", sr.Sector, sr.Err, sr.Source, noScoresMessage, NoSourceName)
 		}
 	}
 }

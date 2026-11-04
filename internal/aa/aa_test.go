@@ -1,256 +1,97 @@
 package aa
 
 import (
-	"encoding/json/v2"
-	"math"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
+	"unicode/utf8"
 
+	"github.com/tomaszjudym/openrouter-discounter/internal/fetch"
 	"github.com/tomaszjudym/openrouter-discounter/internal/rank"
 )
 
-const aaPayload = `{"tier":"pro","data":[
- {"id":"1","name":"Model A","slug":"model-a","model_creator":{"name":"Vendor-A"},
-  "evaluations":{"scicode":68.25,"aa_lcr":0.8533,"tau_banking":0.4722,"artificial_analysis_coding_index":71.4}},
- {"id":"2","name":"Model B","slug":"model-b","model_creator":{"name":"Vendor-B"},
-  "evaluations":{"scicode":55.0}},
- {"id":"3","name":"Unrelated Model","slug":"other-model","model_creator":{"name":"Vendor-C"},
-  "evaluations":{"aa_lcr":0.9}}
-]}`
+const key = "test-key-123"
 
-func providerFor(t *testing.T, body string, status int, orIDs []string) (*Provider, *httptest.Server) {
-	t.Helper()
-	srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(status)
-		_, _ = w.Write([]byte(body))
-	}))
-	p := New(srv.Client(), "test-key", orIDs)
-	p.baseURL = srv.URL
-	p.attempts = 1
-	return p, srv
+var pages = map[string]string{
+	"1": `{"tier":"free","pagination":{"page":1,"has_more":true},"data":[
+ {"name":"Model A (Reasoning)","slug":"model-a","model_creator":{"name":"Vendor-A"},
+  "evaluations":{"artificial_analysis_finance_and_accounting_index":47.2}},
+ {"name":"Model A (Non-reasoning)","slug":"model-a-non-reasoning","model_creator":{"name":"Vendor-A"},
+  "evaluations":{"artificial_analysis_finance_and_accounting_index":30.1}},
+ {"name":"Model B","slug":"model-b","model_creator":{"name":"Vendor-B"},
+  "evaluations":{"artificial_analysis_finance_and_accounting_index":null}}
+]}`,
+	"2": `{"tier":"free","pagination":{"page":2,"has_more":false},"data":[
+ {"name":"Model C","slug":"model-c","model_creator":{"name":"Vendor-C"},
+  "evaluations":{"artificial_analysis_finance_and_accounting_index":55.5}}
+]}`,
 }
 
-func TestScoresMatchesOpenRouterIDs(t *testing.T) {
-	p, _ := providerFor(t, aaPayload, http.StatusOK, []string{
-		"vendor-a/model.a", "vendor-b/model-b", "nomatch/model-x",
-	})
-	scores, err := p.Scores(t.Context())
-	if err != nil {
-		t.Fatalf("Scores() error = %v, want nil", err)
+func provider(t *testing.T, h http.HandlerFunc, apiKey string, ids []string) *Provider {
+	t.Helper()
+	srv := httptest.NewTestServer(t, h)
+	p := New(fetch.Getter{HC: srv.Client(), Attempts: 1, Backoff: time.Millisecond}, apiKey, ids)
+	p.baseURL = srv.URL
+	return p
+}
+
+func TestScoresPaginatesAndMatches(t *testing.T) {
+	var calls int
+	p := provider(t, func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if r.Header.Get("x-api-key") != key {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		_, _ = w.Write([]byte(pages[r.URL.Query().Get("page")]))
+	}, key, []string{"vendor-a/model-a", "vendor-a/model-a:free", "vendor-b/model-b", "vendor-c/model.c"})
+	got := p.Scores(t.Context())[rank.Finance]
+	if got.Err != "" || got.Source != SourceName {
+		t.Fatalf("Finance = %+v, want no error from %s", got, SourceName)
 	}
-	if got := scores[rank.Math]["vendor-a/model.a"]; got != 68.25 {
-		t.Errorf("Math[model.a] = %v, want 68.25", got)
+	if calls != 2 {
+		t.Errorf("calls = %d, want 2 pages", calls)
 	}
-	if got := scores[rank.LCR]["vendor-a/model.a"]; !approx(got, 85.33) {
-		t.Errorf("LCR[model.a] = %v, want 85.33 (fraction scaled to 0-100)", got)
+	want := map[string]float64{"vendor-a/model-a": 47.2, "vendor-a/model-a:free": 47.2, "vendor-c/model.c": 55.5}
+	if len(got.ByModel) != len(want) {
+		t.Errorf("ByModel = %v, want %v", got.ByModel, want)
 	}
-	if got := scores[rank.Finance]["vendor-a/model.a"]; !approx(got, 47.22) {
-		t.Errorf("Finance[model.a] = %v, want 47.22", got)
-	}
-	if got := scores[rank.Code]["vendor-a/model.a"]; got != 71.4 {
-		t.Errorf("Code[model.a] = %v, want 71.4", got)
-	}
-	if _, ok := scores[rank.Code]["vendor-b/model-b"]; ok {
-		t.Error("Code[model-b] present, want absent")
-	}
-	if _, ok := scores[rank.Math]["vendor-b/model-b"]; !ok {
-		t.Error("Math[model-b] missing, want 55.0")
-	}
-	if _, ok := scores[rank.LCR]["vendor-b/model-b"]; ok {
-		t.Error("LCR[model-b] present, want absent")
-	}
-	if _, ok := scores[rank.LCR]["nomatch/model-x"]; ok {
-		t.Error("LCR[unmatched id] present, want absent")
+	for id, v := range want {
+		if got.ByModel[id] != v {
+			t.Errorf("ByModel[%s] = %v, want %v", id, got.ByModel[id], v)
+		}
 	}
 }
 
 func TestScoresMissingKey(t *testing.T) {
-	srv := httptest.NewTestServer(t, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
-	p := New(srv.Client(), "", []string{"a/b"})
-	if _, err := p.Scores(t.Context()); err == nil || !strings.Contains(err.Error(), "AA_API_KEY not set") {
-		t.Fatalf("Scores() error = %v, want missing-key error", err)
+	p := provider(t, func(http.ResponseWriter, *http.Request) { t.Error("request sent without key") }, "", nil)
+	if got := p.Scores(t.Context())[rank.Finance]; !strings.Contains(got.Err, "AA_API_KEY not set") {
+		t.Errorf("Err = %q, want missing-key error", got.Err)
 	}
 }
 
-func TestScoresErrorIsSanitizedAndTruncated(t *testing.T) {
-	secret := "aa_secret_value_123"
-	body := strings.Repeat("leak "+secret+" ", 40)
-	p, _ := providerFor(t, body, http.StatusForbidden, []string{"a/b"})
-	p.key = secret
-	_, err := p.Scores(t.Context())
-	if err == nil {
-		t.Fatal("Scores() error = nil, want non-200 error")
+func TestScoresProErrorRedactedAndTruncated(t *testing.T) {
+	p := provider(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"error":"key ` + key + ` requires a Pro subscription ` + strings.Repeat("x", 200) + `"}`))
+	}, key, nil)
+	got := p.Scores(t.Context())[rank.Finance]
+	if !strings.HasPrefix(got.Err, "status 403") {
+		t.Errorf("Err = %q, want status 403", got.Err)
 	}
-	if strings.Contains(err.Error(), secret) {
-		t.Errorf("error contains the API key: %q", err.Error())
+	if strings.Contains(got.Err, key) || !strings.Contains(got.Err, "REDACTED") {
+		t.Errorf("Err = %q, want key redacted", got.Err)
 	}
-	if got := len([]rune(err.Error())); got > maxErrRunes {
-		t.Errorf("error length = %d runes, want <= %d", got, maxErrRunes)
-	}
-}
-
-func TestScoresUnparseableResponse(t *testing.T) {
-	p, _ := providerFor(t, "{not json", http.StatusOK, []string{"a/b"})
-	if _, err := p.Scores(t.Context()); err == nil || !strings.Contains(err.Error(), "unparseable") {
-		t.Fatalf("Scores() error = %v, want unparseable-response error", err)
+	if n := utf8.RuneCountInString(got.Err); n > fetch.MaxErrRunes {
+		t.Errorf("Err length = %d, want <= %d", n, fetch.MaxErrRunes)
 	}
 }
 
-func TestSanitizeRedactsAndTruncates(t *testing.T) {
-	got := sanitize("prefix "+strings.Repeat("x", 200), "secret")
-	if strings.Contains(got, "secret") {
-		t.Errorf("sanitize() kept the secret: %q", got)
-	}
-	if n := len([]rune(got)); n > maxErrRunes {
-		t.Errorf("sanitize() length = %d, want <= %d", n, maxErrRunes)
+func TestScoresUnparseable(t *testing.T) {
+	p := provider(t, func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("<html>")) }, key, nil)
+	if got := p.Scores(t.Context())[rank.Finance]; !strings.Contains(got.Err, "unparseable") {
+		t.Errorf("Err = %q, want unparseable-response error", got.Err)
 	}
 }
-
-func TestNormalizeMatching(t *testing.T) {
-	if got := normalize("Vendor-A/Model.B"); got != "vendoramodelb" {
-		t.Errorf("normalize = %q, want vendoramodelb", got)
-	}
-	if got := normalize("openai/gpt-5.2"); got != "openaigpt52" {
-		t.Errorf("normalize = %q, want openaigpt52", got)
-	}
-}
-
-func TestMatchTableFreeSuffix(t *testing.T) {
-	p := New(nil, "k", []string{
-		"google/gemini-2.5-flash:free",
-		"google/gemini-2.5-flash",
-	})
-	m := p.matchTable()
-	// AA slug "gemini-2-5-flash" → normalized "gemini25flash" should match the :free id
-	if got := m["gemini25flash"]; got != "google/gemini-2.5-flash:free" && got != "google/gemini-2.5-flash" {
-		t.Errorf("matchTable[gemini25flash] = %q, want either free or base id", got)
-	}
-	// AA creator+slug "google-gemini-2-5-flash" → "googlegemini25flash"
-	if got := m["googlegemini25flash"]; got == "" {
-		t.Error("matchTable[googlegemini25flash] missing")
-	}
-}
-
-func TestIntelligenceMapsSlugsToIDs(t *testing.T) {
-	p, _ := providerFor(t, `{"status":200,"data":[
-	 {"id":"1","name":"Model A","slug":"model-a","model_creator":{"slug":"vendor"},
-	  "evaluations":{"artificial_analysis_intelligence_index":85.5}},
-	 {"id":"2","name":"Model B","slug":"model-b","model_creator":{"slug":"vendor"},
-	  "evaluations":{"artificial_analysis_intelligence_index":70.0}}
-	]}`, http.StatusOK, []string{"vendor/model.a", "vendor/model-b"})
-	got, err := p.Intelligence(t.Context())
-	if err != nil {
-		t.Fatalf("Intelligence() error = %v, want nil", err)
-	}
-	if len(got) != 2 {
-		t.Errorf("Intelligence() = %d entries, want 2", len(got))
-	}
-	if got["vendor/model.a"] != 85.5 {
-		t.Errorf("Intelligence[vendor/model.a] = %v, want 85.5", got["vendor/model.a"])
-	}
-	if got["vendor/model-b"] != 70.0 {
-		t.Errorf("Intelligence[vendor/model-b] = %v, want 70.0", got["vendor/model-b"])
-	}
-}
-
-func TestIntelligenceThinkingSuffixStripsAndTakesPrecedence(t *testing.T) {
-	p, _ := providerFor(t, `{"status":200,"data":[
-	 {"id":"1","slug":"model-a","model_creator":{"slug":"vendor"},
-	  "evaluations":{"artificial_analysis_intelligence_index":60.0}},
-	 {"id":"2","slug":"model-a-thinking","model_creator":{"slug":"vendor"},
-	  "evaluations":{"artificial_analysis_intelligence_index":90.0}}
-	]}`, http.StatusOK, []string{"vendor/model-a"})
-	got, err := p.Intelligence(t.Context())
-	if err != nil {
-		t.Fatalf("Intelligence() error = %v, want nil", err)
-	}
-	if got["vendor/model-a"] != 90.0 {
-		t.Errorf("Intelligence[vendor/model-a] = %v, want 90.0 (thinking variant)", got["vendor/model-a"])
-	}
-}
-
-func TestIntelligenceBaseFillsWithoutThinkingVariant(t *testing.T) {
-	p, _ := providerFor(t, `{"status":200,"data":[
-	 {"id":"1","slug":"model-a","model_creator":{"slug":"vendor"},
-	  "evaluations":{"artificial_analysis_intelligence_index":75.0}}
-	]}`, http.StatusOK, []string{"vendor/model-a"})
-	got, err := p.Intelligence(t.Context())
-	if err != nil {
-		t.Fatalf("Intelligence() error = %v, want nil", err)
-	}
-	if got["vendor/model-a"] != 75.0 {
-		t.Errorf("Intelligence[vendor/model-a] = %v, want 75.0 (base)", got["vendor/model-a"])
-	}
-}
-
-func TestIntelligenceOmitsZeroAndNull(t *testing.T) {
-	p, _ := providerFor(t, `{"status":200,"data":[
-	 {"id":"1","slug":"model-a","model_creator":{"slug":"vendor"},
-	  "evaluations":{"artificial_analysis_intelligence_index":0}},
-	 {"id":"2","slug":"model-b","model_creator":{"slug":"vendor"}}
-	]}`, http.StatusOK, []string{"vendor/model-a", "vendor/model-b"})
-	got, err := p.Intelligence(t.Context())
-	if err != nil {
-		t.Fatalf("Intelligence() error = %v, want nil", err)
-	}
-	if _, ok := got["vendor/model-a"]; ok {
-		t.Error("Intelligence[vendor/model-a] present, want absent (zero)")
-	}
-	if _, ok := got["vendor/model-b"]; ok {
-		t.Error("Intelligence[vendor/model-b] present, want absent (null)")
-	}
-}
-
-func TestFetchSharedBetweenScoresAndIntelligence(t *testing.T) {
-	var count int
-	srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		count++
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"status":200,"data":[
-		 {"id":"1","slug":"model-a","model_creator":{"slug":"vendor"},
-		  "evaluations":{"artificial_analysis_math_index":68.25,"artificial_analysis_intelligence_index":85.0}}
-		]}`))
-	}))
-	p := New(srv.Client(), "key", []string{"vendor/model-a"})
-	p.baseURL = srv.URL
-	p.attempts = 1
-
-	_, err1 := p.Scores(t.Context())
-	if err1 != nil {
-		t.Fatalf("Scores() error = %v", err1)
-	}
-	_, err2 := p.Intelligence(t.Context())
-	if err2 != nil {
-		t.Fatalf("Intelligence() error = %v", err2)
-	}
-	if count != 1 {
-		t.Errorf("server hit %d times, want 1 (shared fetch)", count)
-	}
-}
-
-func TestIntelligenceErrorSanitized(t *testing.T) {
-	secret := "aa_secret_value_xyz"
-	p, _ := providerFor(t, "error with "+secret, http.StatusForbidden, []string{"a/b"})
-	p.key = secret
-	_, err := p.Intelligence(t.Context())
-	if err == nil {
-		t.Fatal("Intelligence() error = nil, want non-200 error")
-	}
-	if contains := strings.Contains(err.Error(), secret); contains {
-		t.Errorf("error contains the API key: %q", err.Error())
-	}
-}
-
-func TestResponseDecode(t *testing.T) {
-	var r response
-	if err := json.Unmarshal([]byte(aaPayload), &r); err != nil {
-		t.Fatalf("Unmarshal error = %v, want nil", err)
-	}
-	if r.Status != 0 || len(r.Data) != 3 {
-		t.Errorf("decoded status/data = %d/%d, want 0/3", r.Status, len(r.Data))
-	}
-}
-
-func approx(a, b float64) bool { return math.Abs(a-b) < 1e-9 }

@@ -1,5 +1,5 @@
-// Package rank orders discounted models per sector, using Artificial
-// Analysis benchmark scores when available and price-only order otherwise.
+// Package rank orders discounted models per sector, using per-sector scores
+// (benchmarks or popularity) when available and price-only order otherwise.
 package rank
 
 import (
@@ -36,15 +36,15 @@ const (
 func (s Sector) Label() string {
 	switch s {
 	case Math:
-		return "MATH — top 10 discounted (AA Math Index)"
+		return "MATH — top 10 discounted (Epoch OTIS Mock AIME)"
 	case LCR:
-		return "LONG-CONTEXT REASONING — top 10 discounted (AA-LCR)"
+		return "LONG-CONTEXT — top 10 discounted (OpenRouter popularity)"
 	case Finance:
-		return "FINANCE — top 10 discounted (τ³-Banking)"
+		return "FINANCE — top 10 discounted (AA Finance & Accounting)"
 	case Code:
-		return "CODE — top 10 discounted (AA Coding Index)"
+		return "CODE — top 10 discounted (Epoch WebDev Arena)"
 	case CodeFree:
-		return "CODE-FREE — top 10 free coding models (AA Coding Index)"
+		return "CODE-FREE — top 10 free coding models (Epoch WebDev Arena)"
 	case ExpensiveLong:
 		return "EXPENSIVE-LONG — top 3 strongest thinking frontier"
 	case StrongestDiscountHalflight:
@@ -70,13 +70,13 @@ func (s Sector) Label() string {
 // Sectors lists the ranked sectors in report order.
 var Sectors = []Sector{Math, LCR, Finance, Code, CodeFree}
 
-// scoreWeight is the share of the AA benchmark in the composite ranking
+// scoreWeight is the share of the sector score in the composite ranking
 // score; the remainder weights the discount (−Δ%). Both terms are 0-100, so
 // 0.65 means the benchmark counts ~2× the price.
 const scoreWeight = 0.65
 
 // Row is one ranked model. Price and Was are USD per Mtok; Pct is negative
-// for a discount. Score is the sector benchmark value (0-100) when Scored.
+// for a discount. Score is the sector score (0-100) when Scored.
 type Row struct {
 	ModelID string
 	Price   float64
@@ -87,29 +87,57 @@ type Row struct {
 }
 
 // SectorResult is one sector's ranking. A non-empty Err marks the sector as
-// price-only and carries the sanitized error for the notice line.
+// price-only and carries the sanitized error for the notice line; Source
+// names the score source the error came from.
 type SectorResult struct {
 	Sector Sector
 	Rows   []Row
+	Source string
 	Err    string
 }
 
-// Provider supplies per-sector benchmark scores keyed by OpenRouter model
-// id. Errors returned must already be sanitized for display. Implementations
-// may fetch lazily; Scores is called once per run.
+// SectorScores is one source's scores for a sector, keyed by OpenRouter
+// model id, 0-100. A non-empty Err (already sanitized for display) marks the
+// source as failed for this sector.
+type SectorScores struct {
+	Source  string
+	ByModel map[string]float64
+	Err     string
+}
+
+// Provider supplies per-sector scores. Implementations return only the
+// sectors they cover; Scores is called once per run.
 type Provider interface {
-	Scores(ctx context.Context) (map[Sector]map[string]float64, error)
+	Scores(ctx context.Context) map[Sector]SectorScores
+}
+
+// Providers combines several sources into one Provider. When two sources
+// cover the same sector, the first one listed wins.
+type Providers []Provider
+
+// Scores implements Provider.
+func (ps Providers) Scores(ctx context.Context) map[Sector]SectorScores {
+	out := make(map[Sector]SectorScores)
+	for _, p := range ps {
+		for sec, sc := range p.Scores(ctx) {
+			if _, ok := out[sec]; !ok {
+				out[sec] = sc
+			}
+		}
+	}
+	return out
 }
 
 // noScoresMessage is the synthetic error for a sector whose source returned
 // no usable scores. It contains no secrets.
 const noScoresMessage = "no scores returned for this sector"
 
-// Result is the full ranking. A non-empty GlobalErr marks every sector as
-// price-only and is surfaced once at the top of the message.
+// noSourceName labels the notice of a sector no provider covers.
+const noSourceName = "score source"
+
+// Result is the full ranking.
 type Result struct {
-	Sectors   []SectorResult
-	GlobalErr string
+	Sectors []SectorResult
 }
 
 // SelectExpensiveLong picks the 3 strongest thinking-capable frontier models
@@ -232,69 +260,70 @@ func SelectFreeDisco(freeIDs []string, models []discounts.Model, intelligence ma
 }
 
 // Rank builds the per-sector top-10 rankings. With scores available, scored
-// models rank by score descending, then by discount magnitude; unscored
-// models rank after scored ones by discount magnitude with score n/a.
-// Without scores for a sector (provider error, or no scores for that
-// sector), the sector ranks by discount magnitude only.
+// models rank by composite descending; unscored models rank after scored
+// ones by discount magnitude with score n/a. Without scores for a sector
+// (source error, or no scores for that sector), the sector ranks by
+// discount magnitude only and carries the notice error.
 //
-// The CodeFree sector ranks free models (freeIDs) by AA Coding Index score
-// only; price columns are omitted. When scores are unavailable the sector
-// lists free models alphabetically with a notice.
+// The CodeFree sector ranks free models (freeIDs) by score only; price
+// columns are omitted. When scores are unavailable the sector lists free
+// models alphabetically with a notice.
 func Rank(ctx context.Context, discs []discounts.Discount, freeIDs []string, prov Provider) Result {
-	scores, err := prov.Scores(ctx)
-	res := Result{GlobalErr: errString(err)}
+	scores := prov.Scores(ctx)
+	var res Result
 	for _, sec := range Sectors {
+		sr, byModel := sectorBase(sec, scores)
 		if sec == CodeFree {
-			res.Sectors = append(res.Sectors, codeFreeResult(freeIDs, scores, err))
+			sr.Rows = freeRows(freeIDs, byModel)
 		} else {
-			res.Sectors = append(res.Sectors, sectorResult(sec, discs, scores, err))
+			sr.Rows = discountRows(discs, byModel)
 		}
+		res.Sectors = append(res.Sectors, sr)
 	}
 	return res
 }
 
-func sectorResult(sec Sector, discs []discounts.Discount, scores map[Sector]map[string]float64, globalErr error) SectorResult {
-	sr := SectorResult{Sector: sec}
-	secScores := scores[sec]
-	if globalErr == nil && len(secScores) == 0 {
+// sectorBase resolves the sector's source and notice error. The returned
+// scores are nil when the sector is price-only.
+func sectorBase(sec Sector, scores map[Sector]SectorScores) (SectorResult, map[string]float64) {
+	sc, ok := scores[sec]
+	sr := SectorResult{Sector: sec, Source: sc.Source}
+	switch {
+	case !ok:
+		sr.Source, sr.Err = noSourceName, noScoresMessage
+	case sc.Err != "":
+		sr.Err = sc.Err
+	case len(sc.ByModel) == 0:
 		sr.Err = noScoresMessage
+	default:
+		return sr, sc.ByModel
 	}
+	return sr, nil
+}
+
+func discountRows(discs []discounts.Discount, byModel map[string]float64) []Row {
 	rows := make([]Row, 0, len(discs))
 	for _, d := range discs {
 		row := Row{ModelID: d.ModelID, Price: d.Price, Was: d.Was, Pct: d.Pct}
-		if s, ok := secScores[d.ModelID]; ok {
+		if s, ok := byModel[d.ModelID]; ok {
 			row.Score, row.Scored = s, true
 		}
 		rows = append(rows, row)
 	}
-	sortRows(rows, secScores == nil || sr.Err != "")
-	sr.Rows = top10(rows)
-	return sr
+	sortRows(rows, byModel == nil)
+	return top10(rows)
 }
 
-func codeFreeResult(freeIDs []string, scores map[Sector]map[string]float64, globalErr error) SectorResult {
-	sr := SectorResult{Sector: CodeFree}
-	secScores := scores[CodeFree]
-	if globalErr == nil && len(secScores) == 0 {
-		sr.Err = noScoresMessage
-	}
+func freeRows(freeIDs []string, byModel map[string]float64) []Row {
 	rows := make([]Row, 0, len(freeIDs))
 	for _, id := range freeIDs {
 		row := Row{ModelID: id}
-		if s, ok := secScores[id]; ok {
+		if s, ok := byModel[id]; ok {
 			row.Score, row.Scored = s, true
 		}
 		rows = append(rows, row)
 	}
-	sr.Rows = top10(sortRowsFree(rows))
-	return sr
-}
-
-func errString(err error) string {
-	if err == nil {
-		return ""
-	}
-	return err.Error()
+	return top10(sortRowsFree(rows))
 }
 
 // sortRows orders scored models by composite descending; unscored models

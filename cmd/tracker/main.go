@@ -1,6 +1,6 @@
 // Command tracker fetches the OpenRouter catalog, ranks active discounts per
-// sector with Artificial Analysis scores, and delivers the report to
-// Telegram. It runs stateless: one invocation, one report, no persisted
+// sector (Epoch AI benchmarks, Artificial Analysis finance index, OpenRouter
+// popularity), and delivers the report to Telegram. It runs stateless: one invocation, one report, no persisted
 // state.
 package main
 
@@ -10,11 +10,15 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/tomaszjudym/openrouter-discounter/internal/aa"
 	"github.com/tomaszjudym/openrouter-discounter/internal/discounts"
+	"github.com/tomaszjudym/openrouter-discounter/internal/epoch"
+	"github.com/tomaszjudym/openrouter-discounter/internal/fetch"
 	"github.com/tomaszjudym/openrouter-discounter/internal/format"
+	"github.com/tomaszjudym/openrouter-discounter/internal/popularity"
 	"github.com/tomaszjudym/openrouter-discounter/internal/preset"
 	"github.com/tomaszjudym/openrouter-discounter/internal/rank"
 	"github.com/tomaszjudym/openrouter-discounter/internal/telegram"
@@ -47,31 +51,23 @@ func run() error {
 		// are simply missing from the report
 		log.Printf("endpoint fetch failures (continuing): %v", err)
 	}
-	ids := make([]string, len(models))
-	for i, m := range models {
-		ids[i] = m.ID
-	}
-	prov := aa.New(hc, os.Getenv("AA_API_KEY"), ids)
-	res := rank.Rank(ctx, discs, free, prov)
 	if len(discs) == 0 {
 		return telegram.Send(ctx, hc, token, chatID, format.NoDiscounts(now))
 	}
-	// Fetch intelligence once, ahead of the Telegram send, so the
-	// strongest-discount section can appear in the report and feed the
-	// preset update with the same computation. The halflight sector is
-	// shown in Telegram; both halflight and volition presets are updated
-	// with the same top-3 strongest-thinking discounted models.
-	intel, err := prov.Intelligence(ctx)
-	if err != nil {
-		log.Printf("Intelligence fetch failed (skipping strongest-discount): %v", err)
+	res := rankSectors(ctx, hc, models, discs, free)
+	// The halflight sector is shown in Telegram; all strongest-discount
+	// presets are updated with the same top-3 strongest-thinking models.
+	intel := intelligence(models)
+	intelOK := len(intel) > 0
+	if !intelOK {
+		log.Printf("catalog carries no intelligence index (skipping strongest-discount)")
 	}
-	intelOK := err == nil
 	telegramSectors := res.Sectors
 	sdSectors, freeSectors := buildIntelSectors(models, discs, free, intel, intelOK)
 	if len(sdSectors) > 0 {
 		telegramSectors = append(telegramSectors, sdSectors[0])
 	}
-	telegramRes := rank.Result{Sectors: telegramSectors, GlobalErr: res.GlobalErr}
+	telegramRes := rank.Result{Sectors: telegramSectors}
 	for _, msg := range format.Messages(telegramRes, now) {
 		if err := telegram.Send(ctx, hc, token, chatID, msg); err != nil {
 			return err
@@ -86,6 +82,52 @@ func run() error {
 	}
 	updatePresets(ctx, hc, sectors)
 	return nil
+}
+
+// rankSectors scores the sectors from their sources — Epoch AI (math,
+// code), Artificial Analysis (finance), OpenRouter popularity (long
+// context) — and logs every sector that fell back to price-only.
+func rankSectors(ctx context.Context, hc *http.Client, models []discounts.Model, discs []discounts.Discount, free []string) rank.Result {
+	ids := make([]string, len(models))
+	for i, m := range models {
+		ids[i] = m.ID
+	}
+	g := fetch.Getter{HC: hc}
+	prov := rank.Providers{
+		epoch.New(g, ids),
+		aa.New(g, os.Getenv("AA_API_KEY"), ids),
+		popularity.New(g, models, rank.LCR),
+	}
+	res := rank.Rank(ctx, discs, free, prov)
+	for _, sr := range res.Sectors {
+		if sr.Err != "" {
+			log.Printf("sector %s price-only: %s error: %s", sr.Sector, sr.Source, sr.Err)
+		}
+	}
+	return res
+}
+
+// intelligence maps catalog ids to the AA Intelligence Index that the
+// OpenRouter catalog carries (benchmarks.artificial_analysis). Variants
+// (":free", ":batch") without their own value inherit the base model's.
+func intelligence(models []discounts.Model) map[string]float64 {
+	out := make(map[string]float64, len(models))
+	for _, m := range models {
+		if v := m.Benchmarks.ArtificialAnalysis.IntelligenceIndex; v > 0 {
+			out[m.ID] = v
+		}
+	}
+	for _, m := range models {
+		if _, ok := out[m.ID]; ok {
+			continue
+		}
+		if base, _, ok := strings.Cut(m.ID, ":"); ok {
+			if v, ok := out[base]; ok {
+				out[m.ID] = v
+			}
+		}
+	}
+	return out
 }
 
 // buildIntelSectors creates the strongest-discount and free-tier disco preset results
@@ -109,7 +151,7 @@ func buildIntelSectors(models []discounts.Model, discs []discounts.Discount, fre
 }
 
 // buildFreeDiscoSectors creates the four free-tier disco preset results from the
-// top 3 free models ranked by AA Intelligence Index. All four personas share the
+// top 3 free models ranked by the catalog's AA Intelligence Index. All four personas share the
 // same model list.
 func buildFreeDiscoSectors(freeIDs []string, models []discounts.Model, intel map[string]float64) []rank.SectorResult {
 	base := rank.SelectFreeDisco(freeIDs, models, intel)

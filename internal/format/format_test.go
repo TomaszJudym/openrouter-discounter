@@ -23,6 +23,7 @@ func scoredResult() rank.Result {
 			},
 		}, {
 			Sector: rank.Finance,
+			Source: "Artificial Analysis",
 			Err:    "429 rate limit, retries exhausted",
 			Rows: []rank.Row{
 				{ModelID: "google/gemini-2.5-pro", Price: 0.65, Was: 1.30, Pct: -50},
@@ -43,9 +44,9 @@ func TestMessagesLayoutAndAlignment(t *testing.T) {
 		t.Errorf("header missing or wrong timestamp:\n%s", m)
 	}
 	for _, want := range []string{
-		"MATH — top 10 discounted (AA Math Index)",
-		"FINANCE — top 10 discounted (τ³-Banking)",
-		noticePrefix + "429 rate limit, retries exhausted",
+		"MATH — top 10 discounted (Epoch OTIS Mock AIME)",
+		"FINANCE — top 10 discounted (AA Finance &amp; Accounting)",
+		"⚠️ scored only by price — Artificial Analysis error: 429 rate limit, retries exhausted",
 		"1  deepseek/deepseek-chat      0.28→0.14  -50  68.2",
 		"2  qwen/qwen3-235b-a22b        0.18→0.09  -50   n/a",
 	} {
@@ -118,25 +119,31 @@ func TestMessagesModelTruncation(t *testing.T) {
 	}
 }
 
-func TestMessagesGlobalErrorNotice(t *testing.T) {
+func TestMessagesNoticeEscaped(t *testing.T) {
 	res := scoredResult()
-	res.GlobalErr = "status 403: <forbidden> & key leaked"
+	res.Sectors[1].Source = "A&B"
+	res.Sectors[1].Err = "status 403: <forbidden> & key leaked"
 	msgs := Messages(res, noon())
-	if !strings.Contains(msgs[0], noticePrefix+"status 403: &lt;forbidden&gt; &amp; key leaked") {
-		t.Errorf("global notice missing or unescaped:\n%s", msgs[0])
+	if !strings.Contains(msgs[0], noticePrefix+"A&amp;B error: status 403: &lt;forbidden&gt; &amp; key leaked") {
+		t.Errorf("notice missing or unescaped:\n%s", msgs[0])
+	}
+}
+
+func TestMessagesNoticeOnlyOnFailedSector(t *testing.T) {
+	m := Messages(scoredResult(), noon())[0]
+	if n := strings.Count(m, noticePrefix); n != 1 {
+		t.Errorf("notice count = %d, want 1 (Finance only):\n%s", n, m)
 	}
 }
 
 func TestMessagesSplitAboveLimit(t *testing.T) {
+	failed := func(s rank.Sector) rank.SectorResult {
+		return rank.SectorResult{Sector: s, Source: "Epoch AI", Err: "Epoch down", Rows: manyRows()}
+	}
 	res := rank.Result{
-		GlobalErr: "AA down",
 		Sectors: []rank.SectorResult{
-			{Sector: rank.Math, Rows: manyRows()},
-			{Sector: rank.LCR, Rows: manyRows()},
-			{Sector: rank.Finance, Rows: manyRows()},
-			{Sector: rank.Math, Rows: manyRows()},
-			{Sector: rank.LCR, Rows: manyRows()},
-			{Sector: rank.Finance, Rows: manyRows()},
+			failed(rank.Math), failed(rank.LCR), failed(rank.Finance),
+			failed(rank.Math), failed(rank.LCR), failed(rank.Finance),
 		},
 	}
 	msgs := Messages(res, noon())
@@ -147,7 +154,7 @@ func TestMessagesSplitAboveLimit(t *testing.T) {
 		if len(m) > 4096 {
 			t.Errorf("message %d exceeds 4096 chars: %d", i, len(m))
 		}
-		if !strings.Contains(m, noticePrefix+"AA down") {
+		if !strings.Contains(m, noticePrefix+"Epoch AI error: Epoch down") {
 			t.Errorf("message %d missing price-only notice:\n%s", i, m)
 		}
 	}
@@ -190,7 +197,7 @@ func TestCodeFreeTableLayout(t *testing.T) {
 	}
 	m := msgs[0]
 	for _, want := range []string{
-		"CODE-FREE — top 10 free coding models (AA Coding Index)",
+		"CODE-FREE — top 10 free coding models (Epoch WebDev Arena)",
 		"google/gemini-2.5-flash…",
 		"88.4",
 		"meta/llama-4-scout:free",

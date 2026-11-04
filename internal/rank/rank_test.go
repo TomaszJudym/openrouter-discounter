@@ -2,7 +2,6 @@ package rank
 
 import (
 	"context"
-	"errors"
 	"testing"
 
 	"github.com/tomaszjudym/openrouter-discounter/internal/discounts"
@@ -16,13 +15,23 @@ func discs() []discounts.Discount {
 	}
 }
 
+// fakeProvider serves fixed scores; every sector it lists comes from src.
 type fakeProvider struct {
 	scores map[Sector]map[string]float64
-	err    error
+	errs   map[Sector]string
 }
 
-func (f fakeProvider) Scores(context.Context) (map[Sector]map[string]float64, error) {
-	return f.scores, f.err
+const src = "Fake Source"
+
+func (f fakeProvider) Scores(context.Context) map[Sector]SectorScores {
+	out := make(map[Sector]SectorScores)
+	for s, by := range f.scores {
+		out[s] = SectorScores{Source: src, ByModel: by}
+	}
+	for s, e := range f.errs {
+		out[s] = SectorScores{Source: src, Err: e}
+	}
+	return out
 }
 
 func TestRankScoredOrderingAndUnscoredLast(t *testing.T) {
@@ -30,9 +39,6 @@ func TestRankScoredOrderingAndUnscoredLast(t *testing.T) {
 		Math: {"a/model-a": 61.2, "b/model-b": 68.2},
 	}}
 	res := Rank(t.Context(), discs(), nil, p)
-	if res.GlobalErr != "" {
-		t.Fatalf("GlobalErr = %q, want empty", res.GlobalErr)
-	}
 	math := res.Sectors[0]
 	if math.Sector != Math || len(math.Rows) != 3 || math.Err != "" {
 		t.Fatalf("Math sector = %+v, want 3 rows, no error", math)
@@ -51,17 +57,15 @@ func TestRankScoredOrderingAndUnscoredLast(t *testing.T) {
 }
 
 func TestRankPriceOnlyFallbackOnProviderError(t *testing.T) {
-	p := fakeProvider{err: errors.New("429 rate limit, retries exhausted")}
+	const msg = "429 rate limit, retries exhausted"
+	p := fakeProvider{errs: map[Sector]string{Math: msg, LCR: msg, Finance: msg, Code: msg, CodeFree: msg}}
 	res := Rank(t.Context(), discs(), nil, p)
-	if res.GlobalErr != "429 rate limit, retries exhausted" {
-		t.Fatalf("GlobalErr = %q, want the provider error", res.GlobalErr)
-	}
 	for _, sr := range res.Sectors {
+		if sr.Err != msg || sr.Source != src {
+			t.Errorf("%s Err/Source = %q/%q, want %q/%q", sr.Sector, sr.Err, sr.Source, msg, src)
+		}
 		if sr.Sector == CodeFree {
 			continue
-		}
-		if sr.Err != "" {
-			t.Errorf("%s Err = %q, want empty (global failure)", sr.Sector, sr.Err)
 		}
 		if len(sr.Rows) != 3 {
 			t.Fatalf("%s rows = %d, want 3", sr.Sector, len(sr.Rows))
@@ -80,9 +84,6 @@ func TestRankPerSectorNoScoresNotice(t *testing.T) {
 		Math: {"a/model-a": 60},
 	}}
 	res := Rank(t.Context(), discs(), nil, p)
-	if res.GlobalErr != "" {
-		t.Fatalf("GlobalErr = %q, want empty", res.GlobalErr)
-	}
 	for _, sr := range res.Sectors {
 		if sr.Sector == Math {
 			if sr.Err != "" {
@@ -179,15 +180,36 @@ func TestCodeFreeTopTenCap(t *testing.T) {
 	}
 }
 
-func TestCodeFreeGlobalError(t *testing.T) {
-	p := fakeProvider{err: errors.New("AA down")}
+func TestCodeFreeSourceError(t *testing.T) {
+	p := fakeProvider{errs: map[Sector]string{CodeFree: "Epoch down"}}
 	res := Rank(t.Context(), nil, []string{"a/b:free"}, p)
 	cf := res.Sectors[4]
-	if cf.Err != "" {
-		t.Errorf("Err = %q, want empty (global error)", cf.Err)
+	if cf.Err != "Epoch down" || cf.Source != src {
+		t.Errorf("Err/Source = %q/%q, want Epoch down/%s", cf.Err, cf.Source, src)
 	}
-	if res.GlobalErr != "AA down" {
-		t.Errorf("GlobalErr = %q, want AA down", res.GlobalErr)
+}
+
+func TestProvidersMergeFirstWins(t *testing.T) {
+	first := fakeProvider{scores: map[Sector]map[string]float64{Math: {"a/model-a": 1}}}
+	second := fakeProvider{
+		scores: map[Sector]map[string]float64{Math: {"a/model-a": 2}},
+		errs:   map[Sector]string{Finance: "AA down"},
+	}
+	got := Providers{first, second}.Scores(t.Context())
+	if got[Math].ByModel["a/model-a"] != 1 {
+		t.Errorf("Math = %v, want first provider's 1", got[Math].ByModel)
+	}
+	if got[Finance].Err != "AA down" {
+		t.Errorf("Finance Err = %q, want AA down", got[Finance].Err)
+	}
+}
+
+func TestRankUncoveredSectorNotice(t *testing.T) {
+	res := Rank(t.Context(), discs(), nil, Providers{})
+	for _, sr := range res.Sectors {
+		if sr.Err != noScoresMessage || sr.Source != noSourceName {
+			t.Errorf("%s Err/Source = %q/%q, want %q/%q", sr.Sector, sr.Err, sr.Source, noScoresMessage, noSourceName)
+		}
 	}
 }
 

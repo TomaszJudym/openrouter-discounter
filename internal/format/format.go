@@ -1,7 +1,7 @@
 // Package format renders the Telegram HTML message(s): a header and per-sector
 // top-10 tables. Any message above the limit is split into one message per sector;
-// every message is self-contained, so the timestamp header and the global
-// price-only notice repeat on each one.
+// every message is self-contained, so the timestamp header repeats on each
+// one and each price-only sector carries its own notice.
 package format
 
 import (
@@ -24,7 +24,7 @@ const (
 	widthScore   = 5
 
 	headerTimeLayout = "2 Jan 2006 15:04 JST"
-	noticePrefix     = "⚠️ scored only by price — Artificial Analysis error: "
+	noticePrefix     = "⚠️ scored only by price — "
 )
 
 var htmlEscaper = strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;")
@@ -36,21 +36,15 @@ var jst = time.FixedZone("JST", 9*3600)
 // the combined message would exceed the per-message limit.
 func Messages(res rank.Result, now time.Time) []string {
 	header := "🪙 OpenRouter discounts — " + now.In(jst).Format(headerTimeLayout)
-	start := func(b *strings.Builder) {
-		b.WriteString(header)
-		if res.GlobalErr != "" {
-			b.WriteString("\n" + notice(res.GlobalErr))
-		}
-	}
 	msgs := make([]string, 0, 4)
 	var b strings.Builder
-	start(&b)
+	b.WriteString(header)
 	for _, sr := range res.Sectors {
-		block := sectorBlock(sr, res.GlobalErr)
-		if b.Len() > 0 && b.Len()+2+len(block) > messageLimit {
+		block := sectorBlock(sr)
+		if b.Len()+2+len(block) > messageLimit {
 			msgs = append(msgs, b.String())
 			b.Reset()
-			start(&b)
+			b.WriteString(header)
 		}
 		b.WriteString("\n\n" + block)
 	}
@@ -66,15 +60,11 @@ func NoDiscounts(now time.Time) string {
 	return b.String()
 }
 
-func sectorBlock(sr rank.SectorResult, globalErr string) string {
+func sectorBlock(sr rank.SectorResult) string {
 	var b strings.Builder
-	b.WriteString(sr.Sector.Label())
-	if sr.Err != "" || globalErr != "" {
-		errText := sr.Err
-		if errText == "" {
-			errText = globalErr
-		}
-		b.WriteString("\n" + notice(errText))
+	b.WriteString(htmlEscaper.Replace(sr.Sector.Label()))
+	if sr.Err != "" {
+		b.WriteString("\n" + notice(sr.Source, sr.Err))
 	}
 	b.WriteString("\n<pre>\n")
 	b.WriteString(table(sr))
@@ -82,8 +72,13 @@ func sectorBlock(sr rank.SectorResult, globalErr string) string {
 	return b.String()
 }
 
-func notice(errText string) string {
-	return noticePrefix + htmlEscaper.Replace(errText)
+// notice is the price-only line: "⚠️ scored only by price — <source> error:
+// <err>". Source and error text are HTML-escaped.
+func notice(source, errText string) string {
+	if source == "" {
+		source = "score source"
+	}
+	return noticePrefix + htmlEscaper.Replace(source) + " error: " + htmlEscaper.Replace(errText)
 }
 
 // cell is one fixed-width column of a table line.

@@ -100,6 +100,7 @@ type Override struct {
 // Model is one catalog entry.
 type Model struct {
 	ID                  string       `json:"id"`
+	CanonicalSlug       string       `json:"canonical_slug"`
 	Pricing             *Pricing     `json:"pricing"`
 	Benchmarks          Benchmarks   `json:"benchmarks"`
 	Reasoning           *Reasoning   `json:"reasoning"`

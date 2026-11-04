@@ -1,5 +1,6 @@
-// Package aa fetches Artificial Analysis benchmark scores and maps them to
-// OpenRouter model ids. It implements rank.Provider.
+// Package aa fetches the Artificial Analysis Finance & Accounting index from
+// the free-tier model list and maps it to OpenRouter model ids. It
+// implements rank.Provider for the Finance sector.
 package aa
 
 import (
@@ -7,38 +8,29 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
-	"strings"
-	"time"
-	"unicode/utf8"
+	"strconv"
 
+	"github.com/tomaszjudym/openrouter-discounter/internal/fetch"
+	"github.com/tomaszjudym/openrouter-discounter/internal/match"
 	"github.com/tomaszjudym/openrouter-discounter/internal/rank"
 )
 
-// baseURL is the Artificial Analysis data API endpoint.
-const baseURL = "https://artificialanalysis.ai/api/v2/language/models"
+// baseURL is the free-tier model list; any valid key works. The Pro list
+// (/api/v2/language/models) returns 403 for free keys.
+const baseURL = "https://artificialanalysis.ai/api/v2/language/models/free"
 
-const (
-	maxBodyBytes  = 16 << 20
-	maxErrRunes   = 120
-	retryAttempts = 3
-	baseBackoff   = 2 * time.Second
-)
+// SourceName labels the Finance sector in the price-only notice.
+const SourceName = "Artificial Analysis"
 
-// fracToPct scales 0-1 AA fractions to the 0-100 report scale.
-const fracToPct = 100
+// maxPages bounds pagination (200 models per page; free quota 100 req/day).
+const maxPages = 10
 
 type evaluations struct {
-	ArtificialAnalysisMathIndex         float64 `json:"scicode"`
-	LCR                                 float64 `json:"aa_lcr"`
-	TauBanking                          float64 `json:"tau_banking"`
-	CodingIndex                         float64 `json:"artificial_analysis_coding_index"`
-	ArtificialAnalysisIntelligenceIndex float64 `json:"artificial_analysis_intelligence_index"`
+	FinanceIndex *float64 `json:"artificial_analysis_finance_and_accounting_index"`
 }
 
 type model struct {
-	ID          string      `json:"id"`
 	Name        string      `json:"name"`
 	Slug        string      `json:"slug"`
 	Creator     creator     `json:"model_creator"`
@@ -51,259 +43,65 @@ type creator struct {
 }
 
 type response struct {
-	Status int     `json:"status"`
-	Data   []model `json:"data"`
+	Data       []model `json:"data"`
+	Pagination struct {
+		HasMore bool `json:"has_more"`
+	} `json:"pagination"`
 }
 
-// Provider fetches AA scores once per run and matches them to the OpenRouter
-// model ids given at construction.
+// Provider fetches the AA free model list and maps scores to the OpenRouter
+// ids given at construction.
 type Provider struct {
-	hc       *http.Client
-	key      string
-	ids      []string
-	baseURL  string
-	attempts int
-	backoff  time.Duration
-
-	// cached response from AA API, shared between Scores and Intelligence
-	data []model
-	err  error
+	get     fetch.Getter
+	key     string
+	table   match.Table
+	baseURL string
 }
 
-// New builds a provider that matches AA scores to orIDs (OpenRouter ids).
-func New(hc *http.Client, key string, orIDs []string) *Provider {
-	return &Provider{hc: hc, key: key, ids: orIDs, baseURL: baseURL, attempts: retryAttempts, backoff: baseBackoff}
+// New builds a provider for the OpenRouter ids.
+func New(g fetch.Getter, key string, orIDs []string) *Provider {
+	return &Provider{get: g, key: key, table: match.New(orIDs), baseURL: baseURL}
 }
 
-// Scores implements rank.Provider. A fetch-level error is returned once for
-// all sectors; a successful fetch with no scores for a sector simply omits
-// that sector's key. Returned error text is sanitized: the API key value is
-// removed and the message is truncated.
-func (p *Provider) Scores(ctx context.Context) (map[rank.Sector]map[string]float64, error) {
-	if err := p.fetch(ctx); err != nil {
-		return nil, err
-	}
-	matches := p.matchTable()
-	out := map[rank.Sector]map[string]float64{
-		rank.Math:     {},
-		rank.LCR:      {},
-		rank.Finance:  {},
-		rank.Code:     {},
-		rank.CodeFree: {},
-	}
-	for _, m := range p.data {
-		id, ok := matches[normalize(m.Slug)]
-		if !ok {
-			id, ok = matches[normalize(m.Name)]
-		}
-		if !ok {
-			id, ok = matches[normalize(m.Creator.Slug+"-"+m.Slug)]
-		}
-		if !ok && m.Creator.Name != "" {
-			id, ok = matches[normalize(m.Creator.Name+"-"+m.Slug)]
-		}
-		if !ok {
-			continue
-		}
-		if v := m.Evaluations.ArtificialAnalysisMathIndex; v != 0 {
-			out[rank.Math][id] = v
-		}
-		if v := m.Evaluations.LCR; v != 0 {
-			out[rank.LCR][id] = v * fracToPct
-		}
-		if v := m.Evaluations.TauBanking; v != 0 {
-			out[rank.Finance][id] = v * fracToPct
-		}
-		if v := m.Evaluations.CodingIndex; v != 0 {
-			out[rank.Code][id] = v
-			out[rank.CodeFree][id] = v
-		}
-	}
-	return out, nil
-}
-
-// Intelligence returns the Artificial Analysis Intelligence Index mapped to
-// OpenRouter model ids. When an AA slug ends with "-thinking", that suffix is
-// stripped before matching; a thinking-variant entry takes precedence over a
-// base entry for the same OpenRouter id. Values <= 0 or null are omitted.
-func findMatch(matches map[string]string, m model, slug string) (string, bool) {
-	id, ok := matches[normalize(slug)]
-	if !ok {
-		id, ok = matches[normalize(m.Name)]
-	}
-	if !ok {
-		id, ok = matches[normalize(m.Creator.Slug+"-"+slug)]
-	}
-	if !ok && m.Creator.Name != "" {
-		id, ok = matches[normalize(m.Creator.Name+"-"+slug)]
-	}
-	return id, ok
-}
-
-// Intelligence returns the Artificial Analysis Intelligence Index mapped to
-// OpenRouter model ids. When an AA slug ends with "-thinking", that suffix is
-// stripped before matching; a thinking-variant entry takes precedence over a
-// base entry for the same OpenRouter id. Values <= 0 or null are omitted.
-func (p *Provider) Intelligence(ctx context.Context) (map[string]float64, error) {
-	if err := p.fetch(ctx); err != nil {
-		return nil, err
-	}
-	matches := p.matchTable()
-	out := make(map[string]float64)
-	// First pass: base entries (without -thinking suffix)
-	for _, m := range p.data {
-		slug := m.Slug
-		if strings.HasSuffix(slug, "-thinking") {
-			continue
-		}
-		id, ok := findMatch(matches, m, slug)
-		if !ok {
-			continue
-		}
-		if v := m.Evaluations.ArtificialAnalysisIntelligenceIndex; v > 0 {
-			out[id] = v
-		}
-	}
-	// Second pass: thinking variants override base entries
-	for _, m := range p.data {
-		slug := m.Slug
-		if !strings.HasSuffix(slug, "-thinking") {
-			continue
-		}
-		baseSlug := strings.TrimSuffix(slug, "-thinking")
-		id, ok := findMatch(matches, m, baseSlug)
-		if !ok {
-			continue
-		}
-		if v := m.Evaluations.ArtificialAnalysisIntelligenceIndex; v > 0 {
-			out[id] = v
-		}
-	}
-	return out, nil
-}
-
-// fetch loads the AA models once per Provider instance.
-func (p *Provider) fetch(ctx context.Context) error {
-	if p.data != nil || p.err != nil {
-		return p.err
-	}
-	if p.key == "" {
-		p.err = errors.New(sanitize("AA_API_KEY not set", ""))
-		return p.err
-	}
-	body, err := p.get(ctx, p.baseURL)
+// Scores implements rank.Provider for Finance. Error text is sanitized: the
+// API key value is removed and the message is truncated.
+func (p *Provider) Scores(ctx context.Context) map[rank.Sector]rank.SectorScores {
+	models, err := p.fetch(ctx)
 	if err != nil {
-		p.err = err
-		return p.err
+		return map[rank.Sector]rank.SectorScores{rank.Finance: {Source: SourceName, Err: err.Error()}}
 	}
-	var r response
-	if err := json.Unmarshal(body, &r); err != nil {
-		p.err = errors.New(sanitize(fmt.Sprintf("unparseable response: %v", err), p.key))
-		return p.err
-	}
-	p.data = r.Data
-	return nil
-}
-
-// get fetches the endpoint with bounded retries on transient failures.
-func (p *Provider) get(ctx context.Context, target string) ([]byte, error) {
-	attempts := p.attempts
-	if attempts <= 0 {
-		attempts = retryAttempts
-	}
-	backoff := p.backoff
-	if backoff <= 0 {
-		backoff = baseBackoff
-	}
-	var lastErr error
-	for attempt := range attempts {
-		if attempt > 0 {
-			select {
-			case <-ctx.Done():
-				return nil, errors.New(sanitize(ctx.Err().Error(), p.key))
-			case <-time.After(backoff):
-				backoff *= 2
-			}
-		}
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
-		if err != nil {
-			return nil, errors.New(sanitize("build request: "+err.Error(), p.key))
-		}
-		req.Header.Set("x-api-key", p.key)
-		resp, err := p.hc.Do(req)
-		if err != nil {
-			lastErr = fmt.Errorf("GET %s: %w", target, err)
+	by := make(map[string]float64)
+	for _, m := range models {
+		v := m.Evaluations.FinanceIndex
+		if v == nil || *v <= 0 {
 			continue
 		}
-		body, readErr := io.ReadAll(io.LimitReader(resp.Body, maxBodyBytes))
-		_ = resp.Body.Close() // read path: a close error is not actionable
-		switch {
-		case readErr != nil:
-			lastErr = fmt.Errorf("read response: %w", readErr)
-		case resp.StatusCode == http.StatusOK:
-			return body, nil
-		case isTransient(resp.StatusCode):
-			lastErr = fmt.Errorf("status %d: %.200s", resp.StatusCode, body)
-		default:
-			return nil, errors.New(sanitize(fmt.Sprintf("status %d: %.200s", resp.StatusCode, body), p.key))
+		ids := p.table.Lookup(m.Slug, m.Name, m.Creator.Slug+"-"+m.Slug, m.Creator.Name+"-"+m.Slug)
+		match.SetMax(by, ids, *v)
+	}
+	return map[rank.Sector]rank.SectorScores{rank.Finance: {Source: SourceName, ByModel: by}}
+}
+
+// fetch loads every page of the free model list.
+func (p *Provider) fetch(ctx context.Context) ([]model, error) {
+	if p.key == "" {
+		return nil, errors.New("AA_API_KEY not set")
+	}
+	hdr := http.Header{"X-Api-Key": {p.key}}
+	var all []model
+	for page := 1; page <= maxPages; page++ {
+		body, err := p.get.Get(ctx, p.baseURL+"?page="+strconv.Itoa(page), hdr, p.key)
+		if err != nil {
+			return nil, err
+		}
+		var r response
+		if err := json.Unmarshal(body, &r); err != nil {
+			return nil, errors.New(fetch.Sanitize(fmt.Sprintf("unparseable response: %v", err), p.key))
+		}
+		all = append(all, r.Data...)
+		if !r.Pagination.HasMore {
+			break
 		}
 	}
-	return nil, errors.New(sanitize(fmt.Sprintf("retries exhausted: %v", lastErr), p.key))
-}
-
-func isTransient(status int) bool {
-	return status == http.StatusTooManyRequests || status >= 500
-}
-
-// matchTable maps normalized AA identifiers to OpenRouter model ids.
-// :free-suffixed ids are also entered without the suffix so AA slugs match.
-func (p *Provider) matchTable() map[string]string {
-	m := make(map[string]string, len(p.ids)*2)
-	for _, id := range p.ids {
-		id = strings.TrimPrefix(id, "~")
-		m[normalize(id)] = id
-		if _, tail, ok := strings.Cut(id, "/"); ok {
-			m[normalize(tail)] = id
-		}
-		if base, ok := strings.CutSuffix(id, ":free"); ok {
-			m[normalize(base)] = id
-			if _, tail, ok := strings.Cut(base, "/"); ok {
-				m[normalize(tail)] = id
-			}
-		}
-	}
-	return m
-}
-
-// normalize strips punctuation so OpenRouter ids (dots, slashes, suffixes)
-// line up with AA slugs (dashes).
-func normalize(s string) string {
-	var b strings.Builder
-	b.Grow(len(s))
-	for _, r := range s {
-		switch {
-		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
-			b.WriteRune(r)
-		case r >= 'A' && r <= 'Z':
-			b.WriteRune(r + 32)
-		}
-	}
-	return b.String()
-}
-
-// sanitize removes the API key value from s and truncates to maxErrRunes.
-func sanitize(s, key string) string {
-	if key != "" {
-		s = strings.ReplaceAll(s, key, "REDACTED")
-	}
-	return truncate(s, maxErrRunes)
-}
-
-func truncate(s string, n int) string {
-	if utf8.RuneCountInString(s) <= n {
-		return s
-	}
-	r := []rune(s)
-	r = append(r[:n-1], '…')
-	return string(r)
+	return all, nil
 }

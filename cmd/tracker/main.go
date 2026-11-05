@@ -60,6 +60,10 @@ func run() error {
 		// are simply missing from the report
 		log.Printf("endpoint fetch failures (continuing): %v", err)
 	}
+	// Selection sees only rows within the price ceilings; expensive-long
+	// keeps the full set, it only uses discounts to reorder frontier models.
+	allDiscs := discs
+	discs = discounts.Affordable(discs)
 	// The Telegram send gets its own deadline: slow fetches before it must
 	// not cost the day's report.
 	send := func(msg string) error {
@@ -89,7 +93,7 @@ func run() error {
 			return err
 		}
 	}
-	sectors := append(res.Sectors, rank.SelectExpensiveLong(models, discs))
+	sectors := append(res.Sectors, rank.SelectExpensiveLong(models, allDiscs))
 	if intelOK && len(sdSectors) > 0 {
 		sectors = append(sectors, sdSectors...)
 	}

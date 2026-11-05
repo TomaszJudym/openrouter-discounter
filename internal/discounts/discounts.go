@@ -46,10 +46,12 @@ const (
 	workers      = 8
 )
 
-// Pricing is a model's base pricing. Prompt is decimal USD per token.
+// Pricing is a model's base pricing. Prompt and Completion are decimal USD
+// per token.
 type Pricing struct {
-	Prompt    string     `json:"prompt"`
-	Overrides []Override `json:"overrides"`
+	Prompt     string     `json:"prompt"`
+	Completion string     `json:"completion"`
+	Overrides  []Override `json:"overrides"`
 }
 
 // Benchmarks holds the catalog's third-party benchmark scores.
@@ -93,8 +95,9 @@ func (m Model) Thinking() bool {
 // Override is one tiered-pricing entry; only entries with a utc_days window
 // are time-limited discounts — volume and context tiers carry none.
 type Override struct {
-	Days   []string `json:"utc_days"` // UTC weekdays the tier applies
-	Prompt string   `json:"prompt"`
+	Days       []string `json:"utc_days"` // UTC weekdays the tier applies
+	Prompt     string   `json:"prompt"`
+	Completion string   `json:"completion"`
 }
 
 // Model is one catalog entry.
@@ -114,9 +117,10 @@ type response struct {
 
 // Endpoint is one provider's pricing for a model.
 type Endpoint struct {
-	Provider string
-	Prompt   string
-	Discount float64 // fraction; 0 = none
+	Provider   string
+	Prompt     string
+	Completion string
+	Discount   float64 // fraction; 0 = none
 }
 
 type endpointsResponse struct {
@@ -134,13 +138,38 @@ type endpointsResponse struct {
 }
 
 // Discount is one active price drop. Price and Was are USD per million
-// prompt tokens; Pct is negative for a discount.
+// prompt tokens, Completion is the discounted USD per million output tokens
+// (0 when unlisted); Pct is negative for a discount.
 type Discount struct {
-	ModelID  string
-	Provider string // discounted provider, empty for catalog-window rows
-	Price    float64
-	Was      float64
-	Pct      float64
+	ModelID    string
+	Provider   string // discounted provider, empty for catalog-window rows
+	Price      float64
+	Was        float64
+	Pct        float64
+	Completion float64
+}
+
+// Price ceilings for model selection, USD per million tokens of the
+// discounted price. Rows above either one are never picked.
+const (
+	MaxPrompt     = 1.0
+	MaxCompletion = 2.0
+)
+
+// Affordable reports whether the discounted price is within both ceilings.
+func (d Discount) Affordable() bool {
+	return d.Price <= MaxPrompt && d.Completion <= MaxCompletion
+}
+
+// Affordable returns the rows within the price ceilings, order kept.
+func Affordable(ds []Discount) []Discount {
+	out := make([]Discount, 0, len(ds))
+	for _, d := range ds {
+		if d.Affordable() {
+			out = append(out, d)
+		}
+	}
+	return out
 }
 
 // Fetch retrieves the catalog.
@@ -259,9 +288,10 @@ func fetchEndpoints(ctx context.Context, hc *http.Client, id string) ([]Endpoint
 			eps := make([]Endpoint, 0, len(r.Data.Endpoints))
 			for _, e := range r.Data.Endpoints {
 				eps = append(eps, Endpoint{
-					Provider: e.ProviderName,
-					Prompt:   e.Pricing.Prompt,
-					Discount: e.Pricing.Discount,
+					Provider:   e.ProviderName,
+					Prompt:     e.Pricing.Prompt,
+					Completion: e.Pricing.Completion,
+					Discount:   e.Pricing.Discount,
 				})
 			}
 			return eps, nil
@@ -280,13 +310,15 @@ func isTransient(status int) bool {
 
 // endpointDiscounts picks, per model, the cheapest discounted endpoint: on a
 // discounted endpoint the listed prompt price is already the discounted
-// price and the list price is prompt/(1-discount).
+// price and the list price is prompt/(1-discount). Endpoints within the
+// price ceilings win over cheaper-prompt endpoints that break the
+// completion ceiling.
 func endpointDiscounts(byID map[string][]Endpoint) []Discount {
 	out := make([]Discount, 0, len(byID))
 	for _, id := range slices.Sorted(maps.Keys(byID)) {
-		best := -1
-		var bestEff float64
-		for i, e := range byID[id] {
+		var best Discount
+		found := false
+		for _, e := range byID[id] {
 			if e.Discount <= 0 || e.Discount >= 1 {
 				continue
 			}
@@ -294,22 +326,21 @@ func endpointDiscounts(byID map[string][]Endpoint) []Discount {
 			if err != nil || p <= 0 {
 				continue
 			}
-			if best < 0 || p < bestEff {
-				best, bestEff = i, p
+			d := Discount{
+				ModelID:    id,
+				Provider:   e.Provider,
+				Price:      p * 1e6,
+				Was:        p / (1 - e.Discount) * 1e6,
+				Pct:        -e.Discount * 100,
+				Completion: perMtok(e.Completion),
+			}
+			if !found || better(d, best) {
+				best, found = d, true
 			}
 		}
-		if best < 0 {
-			continue
+		if found {
+			out = append(out, best)
 		}
-		e := byID[id][best]
-		was := bestEff / (1 - e.Discount)
-		out = append(out, Discount{
-			ModelID:  id,
-			Provider: e.Provider,
-			Price:    bestEff * 1e6,
-			Was:      was * 1e6,
-			Pct:      -e.Discount * 100,
-		})
 	}
 	return out
 }
@@ -329,24 +360,29 @@ func Detect(models []Model, now time.Time) []Discount {
 		if err != nil || base <= 0 {
 			continue
 		}
-		best := minTodayPrice(m.Pricing.Overrides, day)
+		best, completion := minTodayPrice(m.Pricing.Overrides, day)
 		if best >= base || best <= 0 {
 			continue
 		}
+		if completion == "" {
+			completion = m.Pricing.Completion
+		}
 		discounts = append(discounts, Discount{
-			ModelID: m.ID,
-			Price:   best * 1e6,
-			Was:     base * 1e6,
-			Pct:     (best/base - 1) * 100,
+			ModelID:    m.ID,
+			Price:      best * 1e6,
+			Was:        base * 1e6,
+			Pct:        (best/base - 1) * 100,
+			Completion: perMtok(completion),
 		})
 	}
 	return discounts
 }
 
 // minTodayPrice is the cheapest prompt price among overrides whose utc_days
-// window contains day.
-func minTodayPrice(ovs []Override, day string) float64 {
+// window contains day, with that override's completion price.
+func minTodayPrice(ovs []Override, day string) (float64, string) {
 	best := 0.0
+	completion := ""
 	for _, ov := range ovs {
 		if len(ov.Days) == 0 || !slices.ContainsFunc(ov.Days, func(d string) bool { return strings.EqualFold(d, day) }) {
 			continue
@@ -356,10 +392,29 @@ func minTodayPrice(ovs []Override, day string) float64 {
 			continue
 		}
 		if best == 0 || p < best {
-			best = p
+			best, completion = p, ov.Completion
 		}
 	}
-	return best
+	return best, completion
+}
+
+// better orders candidate endpoint rows: affordable first, then cheaper
+// prompt.
+func better(a, b Discount) bool {
+	if a.Affordable() != b.Affordable() {
+		return a.Affordable()
+	}
+	return a.Price < b.Price
+}
+
+// perMtok converts a decimal USD-per-token string to USD per million
+// tokens; unparseable or empty yields 0.
+func perMtok(s string) float64 {
+	v, err := strconv.ParseFloat(s, 64)
+	if err != nil {
+		return 0
+	}
+	return v * 1e6
 }
 
 func freeModels(models []Model) []string {

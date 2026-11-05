@@ -7,6 +7,7 @@ import (
 	"math"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -275,9 +276,70 @@ func (errTransport) RoundTrip(*http.Request) (*http.Response, error) {
 }
 
 func TestDayMatchingAcrossCase(t *testing.T) {
-	if got := minTodayPrice([]Override{{Days: []string{"THURSDAY"}, Prompt: "0.0000010"}}, "thursday"); got != 0.000001 {
+	if got, _ := minTodayPrice([]Override{{Days: []string{"THURSDAY"}, Prompt: "0.0000010"}}, "thursday"); got != 0.000001 {
 		t.Errorf("minTodayPrice() = %v, want 0.000001", got)
 	}
 }
 
 func floatEq(a, b float64) bool { return math.Abs(a-b) < 1e-9 }
+
+func TestEndpointDiscountPrefersAffordableEndpoint(t *testing.T) {
+	byID := map[string][]Endpoint{
+		// cheapest prompt breaks the completion ceiling; the other fits both
+		"a/model": {
+			{Provider: "CheapIn", Prompt: "0.0000002", Completion: "0.000009", Discount: 0.5},
+			{Provider: "Fits", Prompt: "0.0000008", Completion: "0.0000015", Discount: 0.2},
+		},
+		// no endpoint fits: cheapest prompt still reported
+		"b/model": {
+			{Provider: "Pricey", Prompt: "0.000003", Completion: "0.000015", Discount: 0.5},
+			{Provider: "Priceier", Prompt: "0.000004", Completion: "0.000001", Discount: 0.5},
+		},
+	}
+	got := endpointDiscounts(byID)
+	if len(got) != 2 {
+		t.Fatalf("endpointDiscounts() = %+v, want 2 rows", got)
+	}
+	if got[0].Provider != "Fits" || !floatEq(got[0].Completion, 1.5) {
+		t.Errorf("model a row = %+v, want provider Fits, completion 1.5", got[0])
+	}
+	if got[1].Provider != "Pricey" {
+		t.Errorf("model b row = %+v, want provider Pricey", got[1])
+	}
+}
+
+func TestAffordableFiltersPriceCeilings(t *testing.T) {
+	ds := []Discount{
+		{ModelID: "ok", Price: 1.0, Completion: 2.0},
+		{ModelID: "input-over", Price: 1.01, Completion: 0.5},
+		{ModelID: "output-over", Price: 0.1, Completion: 2.01},
+		{ModelID: "unlisted-output", Price: 0.5},
+	}
+	got := Affordable(ds)
+	ids := make([]string, 0, len(got))
+	for _, d := range got {
+		ids = append(ids, d.ModelID)
+	}
+	if want := []string{"ok", "unlisted-output"}; !slices.Equal(ids, want) {
+		t.Errorf("Affordable() ids = %v, want %v", ids, want)
+	}
+}
+
+func TestDetectCarriesCompletion(t *testing.T) {
+	data := mustParse(t, `{"data":[
+		{"id":"v/own","pricing":{"prompt":"0.000002","completion":"0.00001",
+			"overrides":[{"utc_days":["thursday"],"prompt":"0.0000005","completion":"0.0000015"}]}},
+		{"id":"v/inherit","pricing":{"prompt":"0.000002","completion":"0.000003",
+			"overrides":[{"utc_days":["thursday"],"prompt":"0.0000005"}]}}
+	]}`)
+	got := Detect(data, thursday(t))
+	if len(got) != 2 {
+		t.Fatalf("Detect() = %+v, want 2 rows", got)
+	}
+	if !floatEq(got[0].Completion, 1.5) {
+		t.Errorf("override completion = %v, want 1.5", got[0].Completion)
+	}
+	if !floatEq(got[1].Completion, 3) {
+		t.Errorf("base completion fallback = %v, want 3", got[1].Completion)
+	}
+}

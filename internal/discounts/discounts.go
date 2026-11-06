@@ -158,8 +158,8 @@ type Discount struct {
 // Price ceilings for model selection, USD per million tokens of the
 // discounted price. Rows above either one are never picked.
 const (
-	MaxPrompt     = 1.0
-	MaxCompletion = 2.0
+	MaxPrompt     = 0.5
+	MaxCompletion = 1.0
 )
 
 // Affordable reports whether the discounted price is within both ceilings.

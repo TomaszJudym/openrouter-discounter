@@ -288,7 +288,7 @@ func TestEndpointDiscountPrefersAffordableEndpoint(t *testing.T) {
 		// cheapest prompt breaks the completion ceiling; the other fits both
 		"a/model": {
 			{Provider: "CheapIn", Prompt: "0.0000002", Completion: "0.000009", Discount: 0.5},
-			{Provider: "Fits", Prompt: "0.0000008", Completion: "0.0000015", Discount: 0.2},
+			{Provider: "Fits", Prompt: "0.0000004", Completion: "0.0000008", Discount: 0.2},
 		},
 		// no endpoint fits: cheapest prompt still reported
 		"b/model": {
@@ -300,8 +300,8 @@ func TestEndpointDiscountPrefersAffordableEndpoint(t *testing.T) {
 	if len(got) != 2 {
 		t.Fatalf("endpointDiscounts() = %+v, want 2 rows", got)
 	}
-	if got[0].Provider != "Fits" || !floatEq(got[0].Completion, 1.5) {
-		t.Errorf("model a row = %+v, want provider Fits, completion 1.5", got[0])
+	if got[0].Provider != "Fits" || !floatEq(got[0].Completion, 0.8) {
+		t.Errorf("model a row = %+v, want provider Fits, completion 0.8", got[0])
 	}
 	if got[1].Provider != "Pricey" {
 		t.Errorf("model b row = %+v, want provider Pricey", got[1])
@@ -310,10 +310,10 @@ func TestEndpointDiscountPrefersAffordableEndpoint(t *testing.T) {
 
 func TestAffordableFiltersPriceCeilings(t *testing.T) {
 	ds := []Discount{
-		{ModelID: "ok", Price: 1.0, Completion: 2.0},
-		{ModelID: "input-over", Price: 1.01, Completion: 0.5},
-		{ModelID: "output-over", Price: 0.1, Completion: 2.01},
-		{ModelID: "unlisted-output", Price: 0.5},
+		{ModelID: "ok", Price: 0.5, Completion: 1.0},
+		{ModelID: "input-over", Price: 0.51, Completion: 0.5},
+		{ModelID: "output-over", Price: 0.1, Completion: 1.01},
+		{ModelID: "unlisted-output", Price: 0.25},
 	}
 	got := Affordable(ds)
 	ids := make([]string, 0, len(got))

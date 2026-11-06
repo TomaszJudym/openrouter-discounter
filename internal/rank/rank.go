@@ -195,9 +195,9 @@ func SelectExpensiveLong(models []discounts.Model, discs []discounts.Discount) S
 }
 
 // SelectStrongestDiscount returns the top 3 discounted models with positive
-// thinking scores that can produce text output. Pool is the discounted rows
-// whose model satisfies ChatText() and whose id does not end in :free or
-// :batch. Only ids with a positive thinking score are included. Order is
+// thinking scores that can produce text output and call tools. Pool is the
+// discounted rows whose model satisfies ChatText() and ToolCalling() and whose
+// id does not end in :free or :batch. Only ids with a positive thinking score are included. Order is
 // strongest (highest score) to weakest, stable.
 func SelectStrongestDiscount(models []discounts.Model, discs []discounts.Discount, thinking map[string]float64) SectorResult {
 	if len(thinking) == 0 {
@@ -213,7 +213,7 @@ func SelectStrongestDiscount(models []discounts.Model, discs []discounts.Discoun
 			continue
 		}
 		m, ok := catalog[d.ModelID]
-		if !ok || !m.ChatText() {
+		if !ok || !m.ChatText() || !m.ToolCalling() {
 			continue
 		}
 		score, ok := thinking[d.ModelID]
@@ -250,8 +250,8 @@ func HarnessOnly(id string) bool {
 }
 
 // SelectFreeDisco returns the top 3 free models ranked by AA Intelligence
-// Index. Only models whose id ends in :free, are usable from web chat, and
-// have a positive intelligence score are included. Order is strongest
+// Index. Only models whose id ends in :free, are usable from web chat,
+// support tool calling, and have a positive intelligence score are included. Order is strongest
 // (highest score) to weakest, stable.
 func SelectFreeDisco(freeIDs []string, models []discounts.Model, intelligence map[string]float64) SectorResult {
 	if len(intelligence) == 0 {
@@ -267,7 +267,7 @@ func SelectFreeDisco(freeIDs []string, models []discounts.Model, intelligence ma
 			continue
 		}
 		m, ok := catalog[id]
-		if !ok || !m.ChatText() {
+		if !ok || !m.ChatText() || !m.ToolCalling() {
 			continue
 		}
 		score, ok := intelligence[id]

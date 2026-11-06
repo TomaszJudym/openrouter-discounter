@@ -96,6 +96,10 @@ API exposes no flag for this; the denylist `harnessOnly` in
 ("only available for use with agentic harnesses") and needs a manual update
 when OpenRouter adds such endpoints.
 
+All persona presets (`strongest-discount-*`, `*-free`) require tool calling:
+a model qualifies only when the catalog lists `tools` in its
+`supported_parameters`.
+
 Each update POSTs the new model list plus the shared system prompt and
 `verbosity: low` to `api/v1/presets/{slug}/chat/completions`, which creates
 a new server-side designated version — nothing is stored or committed here.

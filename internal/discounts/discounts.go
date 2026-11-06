@@ -92,6 +92,12 @@ func (m Model) Thinking() bool {
 	return slices.Contains(m.SupportedParameters, "reasoning")
 }
 
+// ToolCalling reports whether the model accepts function/tool definitions:
+// the catalog lists "tools" in supported_parameters.
+func (m Model) ToolCalling() bool {
+	return slices.Contains(m.SupportedParameters, "tools")
+}
+
 // Override is one tiered-pricing entry; only entries with a utc_days window
 // are time-limited discounts — volume and context tiers carry none.
 type Override struct {

@@ -340,13 +340,27 @@ func TestScoreModelsEmpty(t *testing.T) {
 	}
 }
 
+func TestSelectStrongestDiscountRequiresTools(t *testing.T) {
+	models := []discounts.Model{
+		{ID: "a/notools", SupportedParameters: []string{"temperature"}},
+		{ID: "b/tools", SupportedParameters: tools},
+		{ID: "c/nil"},
+	}
+	discs := []discounts.Discount{{ModelID: "a/notools"}, {ModelID: "b/tools"}, {ModelID: "c/nil"}}
+	thinking := map[string]float64{"a/notools": 90, "b/tools": 10, "c/nil": 80}
+	got := SelectStrongestDiscount(models, discs, thinking)
+	if len(got.Rows) != 1 || got.Rows[0].ModelID != "b/tools" {
+		t.Errorf("Rows = %+v, want only b/tools", got.Rows)
+	}
+}
+
 func TestSelectStrongestDiscountFiltersAndOrders(t *testing.T) {
 	models := []discounts.Model{
-		{ID: "a/chat-text", Architecture: discounts.Architecture{OutputModalities: []string{"text"}}},
-		{ID: "b/image-only", Architecture: discounts.Architecture{OutputModalities: []string{"image"}}},
-		{ID: "c/free:free", Architecture: discounts.Architecture{OutputModalities: nil}},
-		{ID: "d/batch:batch", Architecture: discounts.Architecture{OutputModalities: nil}},
-		{ID: "e/unknown", Architecture: discounts.Architecture{}},
+		{ID: "a/chat-text", SupportedParameters: tools, Architecture: discounts.Architecture{OutputModalities: []string{"text"}}},
+		{ID: "b/image-only", SupportedParameters: tools, Architecture: discounts.Architecture{OutputModalities: []string{"image"}}},
+		{ID: "c/free:free", SupportedParameters: tools, Architecture: discounts.Architecture{OutputModalities: nil}},
+		{ID: "d/batch:batch", SupportedParameters: tools, Architecture: discounts.Architecture{OutputModalities: nil}},
+		{ID: "e/unknown", SupportedParameters: tools, Architecture: discounts.Architecture{}},
 	}
 	discs := []discounts.Discount{
 		{ModelID: "a/chat-text", Price: 1, Was: 2, Pct: -50},
@@ -377,10 +391,10 @@ func TestSelectStrongestDiscountFiltersAndOrders(t *testing.T) {
 
 func TestSelectStrongestDiscountCapsAtThree(t *testing.T) {
 	models := []discounts.Model{
-		{ID: "a/m1", Architecture: discounts.Architecture{OutputModalities: []string{"text"}}},
-		{ID: "b/m2", Architecture: discounts.Architecture{}},
-		{ID: "c/m3", Architecture: discounts.Architecture{}},
-		{ID: "d/m4", Architecture: discounts.Architecture{}},
+		{ID: "a/m1", SupportedParameters: tools, Architecture: discounts.Architecture{OutputModalities: []string{"text"}}},
+		{ID: "b/m2", SupportedParameters: tools, Architecture: discounts.Architecture{}},
+		{ID: "c/m3", SupportedParameters: tools, Architecture: discounts.Architecture{}},
+		{ID: "d/m4", SupportedParameters: tools, Architecture: discounts.Architecture{}},
 	}
 	discs := []discounts.Discount{
 		{ModelID: "a/m1"}, {ModelID: "b/m2"}, {ModelID: "c/m3"}, {ModelID: "d/m4"},
@@ -417,12 +431,29 @@ func TestSelectStrongestDiscountModelMissing(t *testing.T) {
 	}
 }
 
+// tools marks a catalog model as tool-calling capable.
+var tools = []string{"tools", "tool_choice"}
+
+func TestSelectFreeDiscoRequiresTools(t *testing.T) {
+	models := []discounts.Model{
+		{ID: "a/notools:free", SupportedParameters: []string{"temperature"}},
+		{ID: "b/tools:free", SupportedParameters: tools},
+		{ID: "c/nil:free"},
+	}
+	freeIDs := []string{"a/notools:free", "b/tools:free", "c/nil:free"}
+	intel := map[string]float64{"a/notools:free": 90, "b/tools:free": 10, "c/nil:free": 80}
+	got := SelectFreeDisco(freeIDs, models, intel)
+	if len(got.Rows) != 1 || got.Rows[0].ModelID != "b/tools:free" {
+		t.Errorf("Rows = %+v, want only b/tools:free", got.Rows)
+	}
+}
+
 func TestSelectFreeDiscoFiltersAndOrders(t *testing.T) {
 	models := []discounts.Model{
-		{ID: "a/free:free", Architecture: discounts.Architecture{OutputModalities: []string{"text"}}},
-		{ID: "b/paid", Architecture: discounts.Architecture{OutputModalities: []string{"text"}}},
-		{ID: "c/free:free", Architecture: discounts.Architecture{OutputModalities: []string{"text"}}},
-		{ID: "d/free:free", Architecture: discounts.Architecture{OutputModalities: []string{"image"}}},
+		{ID: "a/free:free", SupportedParameters: tools, Architecture: discounts.Architecture{OutputModalities: []string{"text"}}},
+		{ID: "b/paid", SupportedParameters: tools, Architecture: discounts.Architecture{OutputModalities: []string{"text"}}},
+		{ID: "c/free:free", SupportedParameters: tools, Architecture: discounts.Architecture{OutputModalities: []string{"text"}}},
+		{ID: "d/free:free", SupportedParameters: tools, Architecture: discounts.Architecture{OutputModalities: []string{"image"}}},
 	}
 	freeIDs := []string{"a/free:free", "b/paid", "c/free:free", "d/free:free"}
 	intel := map[string]float64{
@@ -448,7 +479,7 @@ func TestSelectFreeDiscoFiltersAndOrders(t *testing.T) {
 
 func TestFreeSectorsSkipHarnessOnly(t *testing.T) {
 	const harness = "thinkingmachines/inkling:free"
-	models := []discounts.Model{{ID: harness}, {ID: "a/chat:free"}}
+	models := []discounts.Model{{ID: harness, SupportedParameters: tools}, {ID: "a/chat:free", SupportedParameters: tools}}
 	freeIDs := []string{harness, "a/chat:free"}
 	scores := map[string]float64{harness: 99, "a/chat:free": 10}
 
@@ -470,10 +501,10 @@ func TestFreeSectorsSkipHarnessOnly(t *testing.T) {
 
 func TestSelectFreeDiscoCapsAtThree(t *testing.T) {
 	models := []discounts.Model{
-		{ID: "a/f1:free", Architecture: discounts.Architecture{}},
-		{ID: "b/f2:free", Architecture: discounts.Architecture{}},
-		{ID: "c/f3:free", Architecture: discounts.Architecture{}},
-		{ID: "d/f4:free", Architecture: discounts.Architecture{}},
+		{ID: "a/f1:free", SupportedParameters: tools, Architecture: discounts.Architecture{}},
+		{ID: "b/f2:free", SupportedParameters: tools, Architecture: discounts.Architecture{}},
+		{ID: "c/f3:free", SupportedParameters: tools, Architecture: discounts.Architecture{}},
+		{ID: "d/f4:free", SupportedParameters: tools, Architecture: discounts.Architecture{}},
 	}
 	freeIDs := []string{"a/f1:free", "b/f2:free", "c/f3:free", "d/f4:free"}
 	intel := map[string]float64{"a/f1:free": 10, "b/f2:free": 20, "c/f3:free": 30, "d/f4:free": 40}
@@ -490,7 +521,7 @@ func TestSelectFreeDiscoCapsAtThree(t *testing.T) {
 }
 
 func TestSelectFreeDiscoEmptyIntel(t *testing.T) {
-	models := []discounts.Model{{ID: "a/f:free", Architecture: discounts.Architecture{}}}
+	models := []discounts.Model{{ID: "a/f:free", SupportedParameters: tools, Architecture: discounts.Architecture{}}}
 	freeIDs := []string{"a/f:free"}
 	got := SelectFreeDisco(freeIDs, models, nil)
 	if got.Rows != nil {

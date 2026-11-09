@@ -50,10 +50,10 @@ Each category has one score per model, 0–100:
 Ranking:
 
 ```
-final = 0.65 × score + 0.35 × (−Δ%)
+final = 0.5 × score + 0.5 × (−Δ%)
 ```
 
-The score counts ~2× the price. Prices are USD per Mtok prompt; Δ% is
+Score and price weigh equally. Prices are USD per Mtok prompt; Δ% is
 the discount vs the provider's list price. Top 10 per category are sent.
 Unscored models rank last, by discount. A model keeps its best score across
 reasoning-effort variants; a `:free` id shares its base model's benchmark
@@ -78,10 +78,10 @@ The error text has the AA key removed and is truncated to 120 chars.
 With `OPENROUTER_API_KEY` set, each run also repoints the OpenRouter presets
 `admech-math`, `admech-long`, `admech-finance`, `admech-code`, and
 `admech-code-free` at the 3 best of the category's top-10 table — the same
-composite ranking as the report (0.65 benchmark + 0.35 discount), scored on
-the category's score. `expensive-long` routes the 3 strongest
-thinking frontier models (catalog AA Intelligence Index, discount-resorted),
-independent of discounts. `strongest-discount-half-light` routes to the top-3 strongest-thinking
+composite ranking as the report (0.5 benchmark + 0.5 discount), scored on
+the category's score. `expensive-long` routes the 3 strongest discounted
+thinking models (catalog AA Intelligence Index, no price ceilings), ordered
+deepest discount first. `strongest-discount-half-light` routes to the top-3 strongest-thinking
 (catalog AA Intelligence Index) discounted chat models, carries the HALF-LIGHT persona
 prompt with reasoning effort max and verbosity low, and adds sampling settings
 (temperature 1.15, top_p 0.95, frequency_penalty 0.4, presence_penalty 0.4) for more
@@ -94,11 +94,12 @@ restricted to agentic harnesses, which fail in the OpenRouter web chat. The
 API exposes no flag for this; the denylist `harnessOnly` in
 `internal/rank/rank.go` is curated from each model page's warning
 ("only available for use with agentic harnesses") and needs a manual update
-when OpenRouter adds such endpoints.
+when OpenRouter adds such endpoints. They also skip vision models (image or
+video input) and models with non-text output, and put tool-calling models
+(`tools` in `supported_parameters`) ahead of the rest.
 
-All persona presets (`strongest-discount-*`, `*-free`) require tool calling:
-a model qualifies only when the catalog lists `tools` in its
-`supported_parameters`.
+`strongest-discount-*` presets require tool calling: a model qualifies only
+when the catalog lists `tools` in its `supported_parameters`.
 
 Each update POSTs the new model list plus the shared system prompt and
 `verbosity: low` to `api/v1/presets/{slug}/chat/completions`, which creates

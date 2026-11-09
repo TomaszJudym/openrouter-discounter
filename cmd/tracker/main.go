@@ -61,7 +61,7 @@ func run() error {
 		log.Printf("endpoint fetch failures (continuing): %v", err)
 	}
 	// Selection sees only rows within the price ceilings; expensive-long
-	// keeps the full set, it only uses discounts to reorder frontier models.
+	// picks from the full discounted set, ignoring the ceilings.
 	allDiscs := discs
 	discs = discounts.Affordable(discs)
 	// The Telegram send gets its own deadline: slow fetches before it must
@@ -74,7 +74,7 @@ func run() error {
 	if len(discs) == 0 {
 		return send(format.NoDiscounts(now))
 	}
-	res := rankSectors(ctx, hc, models, discs, free)
+	res := rankSectors(ctx, hc, models, discs, rank.TextFree(free, models))
 	// The halflight sector is shown in Telegram; all strongest-discount
 	// presets are updated with the same top-3 strongest-thinking models.
 	intel := intelligence(models)
@@ -107,7 +107,7 @@ func run() error {
 // rankSectors scores the sectors from their sources — Epoch AI (math,
 // code), Artificial Analysis (finance), OpenRouter popularity (long
 // context) — and logs every sector that fell back to price-only.
-func rankSectors(ctx context.Context, hc *http.Client, models []discounts.Model, discs []discounts.Discount, free []string) rank.Result {
+func rankSectors(ctx context.Context, hc *http.Client, models []discounts.Model, discs []discounts.Discount, free []rank.FreeModel) rank.Result {
 	ids := make([]string, len(models))
 	for i, m := range models {
 		ids[i] = m.ID
@@ -192,7 +192,7 @@ func buildFreeDiscoSectors(freeIDs []string, models []discounts.Model, intel map
 
 // updatePresets points each category's preset at its top 3 models: the
 // admech-* presets follow the discounted rankings; expensive-long follows
-// the strongest thinking frontier with discount-resorted order;
+// the strongest discounted thinking models, deepest discount first;
 // strongest-discount-* presets route to the top-3 strongest-thinking
 // discounted chat models (same models, distinct personas). Failures are
 // logged and non-fatal: the Telegram report is the primary output.

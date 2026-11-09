@@ -47,7 +47,7 @@ func (s Sector) Label() string {
 	case CodeFree:
 		return "CODE-FREE — top 10 free coding models (Epoch WebDev Arena)"
 	case ExpensiveLong:
-		return "EXPENSIVE-LONG — top 3 strongest thinking frontier"
+		return "EXPENSIVE-LONG — top 3 strongest thinking discounted"
 	case StrongestDiscountHalflight:
 		return "STRONGEST-DISCOUNT-HALFLIGHT — top 3 strongest-thinking discounted"
 	case StrongestDiscountVolition:
@@ -73,8 +73,8 @@ var Sectors = []Sector{Math, LCR, Finance, Code, CodeFree}
 
 // scoreWeight is the share of the sector score in the composite ranking
 // score; the remainder weights the discount (−Δ%). Both terms are 0-100, so
-// 0.65 means the benchmark counts ~2× the price.
-const scoreWeight = 0.65
+// 0.5 weights benchmark and price equally.
+const scoreWeight = 0.5
 
 // Row is one ranked model. Price and Was are USD per Mtok; Pct is negative
 // for a discount. Score is the sector score (0-100) when Scored.
@@ -149,49 +149,39 @@ type Result struct {
 	Sectors []SectorResult
 }
 
-// SelectExpensiveLong picks the 3 strongest thinking-capable frontier models
-// from the catalog (highest AA Intelligence Index, non-free, non-batch, with
-// reasoning support). Discounted rows lead, deepest discount first; the rest
-// keep their strength order.
+// SelectExpensiveLong picks the 3 strongest discounted thinking-capable
+// models (highest AA Intelligence Index among discounted, non-free,
+// non-batch rows with reasoning support), ordered deepest discount first;
+// ties keep strength order. Price ceilings do not apply.
 func SelectExpensiveLong(models []discounts.Model, discs []discounts.Discount) SectorResult {
-	cands := make([]Row, 0, 8)
+	catalog := make(map[string]discounts.Model, len(models))
 	for _, m := range models {
-		if strings.HasSuffix(m.ID, ":free") || strings.HasSuffix(m.ID, ":batch") {
+		catalog[m.ID] = m
+	}
+	rows := make([]Row, 0, len(discs))
+	for _, d := range discs {
+		if strings.HasSuffix(d.ModelID, ":free") || strings.HasSuffix(d.ModelID, ":batch") {
+			continue
+		}
+		m, ok := catalog[d.ModelID]
+		if !ok || !m.Thinking() {
 			continue
 		}
 		ii := m.Benchmarks.ArtificialAnalysis.IntelligenceIndex
-		if ii <= 0 || !m.Thinking() {
+		if ii <= 0 {
 			continue
 		}
-		cands = append(cands, Row{ModelID: m.ID, Score: ii, Scored: true})
+		rows = append(rows, Row{ModelID: d.ModelID, Price: d.Price, Was: d.Was, Pct: d.Pct, Score: ii, Scored: true})
 	}
-	if len(cands) == 0 {
+	if len(rows) == 0 {
 		return SectorResult{Sector: ExpensiveLong}
 	}
-	slices.SortStableFunc(cands, byScoreDesc)
-	if len(cands) > 3 {
-		cands = cands[:3]
+	slices.SortStableFunc(rows, byScoreDesc)
+	if len(rows) > 3 {
+		rows = rows[:3]
 	}
-	pct := make(map[string]float64, len(discs))
-	for _, d := range discs {
-		pct[d.ModelID] = d.Pct
-	}
-	// one stable sort: discounted rows first by depth, ties keep strength order
-	slices.SortStableFunc(cands, func(a, b Row) int {
-		pa, aOk := pct[a.ModelID]
-		pb, bOk := pct[b.ModelID]
-		switch {
-		case aOk != bOk:
-			if aOk {
-				return -1
-			}
-			return 1
-		case aOk:
-			return cmp.Compare(pa, pb)
-		}
-		return 0
-	})
-	return SectorResult{Sector: ExpensiveLong, Rows: cands}
+	slices.SortStableFunc(rows, byPct)
+	return SectorResult{Sector: ExpensiveLong, Rows: rows}
 }
 
 // SelectStrongestDiscount returns the top 3 discounted models with positive
@@ -249,41 +239,90 @@ func HarnessOnly(id string) bool {
 	return ok
 }
 
-// SelectFreeDisco returns the top 3 free models ranked by AA Intelligence
-// Index. Only models whose id ends in :free, are usable from web chat,
-// support tool calling, and have a positive intelligence score are included. Order is strongest
-// (highest score) to weakest, stable.
-func SelectFreeDisco(freeIDs []string, models []discounts.Model, intelligence map[string]float64) SectorResult {
-	if len(intelligence) == 0 {
-		return SectorResult{Sector: FreeHalflight}
-	}
+// FreeModel is a free-tier candidate: its id and whether it can call tools.
+type FreeModel struct {
+	ID    string
+	Tools bool
+}
+
+// TextFree keeps the :free ids usable for text chat: listed in the catalog,
+// not harness-only, and TextOnly (no vision input, text-only output). Order
+// is kept; Tools marks tool-calling support for later prioritisation.
+func TextFree(freeIDs []string, models []discounts.Model) []FreeModel {
 	catalog := make(map[string]discounts.Model, len(models))
 	for _, m := range models {
 		catalog[m.ID] = m
 	}
-	rows := make([]Row, 0, len(freeIDs))
+	out := make([]FreeModel, 0, len(freeIDs))
 	for _, id := range freeIDs {
 		if !strings.HasSuffix(id, ":free") || HarnessOnly(id) {
 			continue
 		}
 		m, ok := catalog[id]
-		if !ok || !m.ChatText() || !m.ToolCalling() {
+		if !ok || !m.TextOnly() {
 			continue
 		}
-		score, ok := intelligence[id]
+		out = append(out, FreeModel{ID: id, Tools: m.ToolCalling()})
+	}
+	return out
+}
+
+// SelectFreeDisco returns the top 3 free text models (see TextFree) with a
+// positive AA Intelligence Index. Tool-calling models lead; within each
+// group the order is strongest to weakest, stable.
+func SelectFreeDisco(freeIDs []string, models []discounts.Model, intelligence map[string]float64) SectorResult {
+	if len(intelligence) == 0 {
+		return SectorResult{Sector: FreeHalflight}
+	}
+	var cands []freeRow
+	for _, f := range TextFree(freeIDs, models) {
+		score, ok := intelligence[f.ID]
 		if !ok || score <= 0 {
 			continue
 		}
-		rows = append(rows, Row{ModelID: id, Score: score, Scored: true})
+		cands = append(cands, freeRow{Row{ModelID: f.ID, Score: score, Scored: true}, f.Tools})
 	}
-	if len(rows) == 0 {
+	if len(cands) == 0 {
 		return SectorResult{Sector: FreeHalflight}
 	}
-	slices.SortStableFunc(rows, byScoreDesc)
+	rows := sortFree(cands)
 	if len(rows) > 3 {
 		rows = rows[:3]
 	}
 	return SectorResult{Sector: FreeHalflight, Rows: rows}
+}
+
+// freeRow is a free-tier row with its tool-calling flag for ordering.
+type freeRow struct {
+	Row
+	tools bool
+}
+
+// sortFree orders free rows: scored before unscored; within each, tool-calling
+// models first; then score descending (scored) or id (unscored).
+func sortFree(cands []freeRow) []Row {
+	slices.SortStableFunc(cands, func(a, b freeRow) int {
+		switch {
+		case a.Scored != b.Scored:
+			if a.Scored {
+				return -1
+			}
+			return 1
+		case a.tools != b.tools:
+			if a.tools {
+				return -1
+			}
+			return 1
+		case a.Scored:
+			return byScoreDesc(a.Row, b.Row)
+		}
+		return cmp.Compare(a.ModelID, b.ModelID)
+	})
+	rows := make([]Row, len(cands))
+	for i, c := range cands {
+		rows[i] = c.Row
+	}
+	return rows
 }
 
 // Rank builds the per-sector top-10 rankings. With scores available, scored
@@ -292,16 +331,17 @@ func SelectFreeDisco(freeIDs []string, models []discounts.Model, intelligence ma
 // (source error, or no scores for that sector), the sector ranks by
 // discount magnitude only and carries the notice error.
 //
-// The CodeFree sector ranks free models (freeIDs) by score only; price
-// columns are omitted. When scores are unavailable the sector lists free
-// models alphabetically with a notice.
-func Rank(ctx context.Context, discs []discounts.Discount, freeIDs []string, prov Provider) Result {
+// The CodeFree sector ranks free text models (see TextFree) by score only,
+// tool-calling models first; price columns are omitted. When scores are
+// unavailable the sector lists them tool-calling first, then alphabetically,
+// with a notice.
+func Rank(ctx context.Context, discs []discounts.Discount, free []FreeModel, prov Provider) Result {
 	scores := prov.Scores(ctx)
 	var res Result
 	for _, sec := range Sectors {
 		sr, byModel := sectorBase(sec, scores)
 		if sec == CodeFree {
-			sr.Rows = freeRows(freeIDs, byModel)
+			sr.Rows = freeRows(free, byModel)
 		} else {
 			sr.Rows = discountRows(discs, byModel)
 		}
@@ -341,19 +381,16 @@ func discountRows(discs []discounts.Discount, byModel map[string]float64) []Row 
 	return top10(rows)
 }
 
-func freeRows(freeIDs []string, byModel map[string]float64) []Row {
-	rows := make([]Row, 0, len(freeIDs))
-	for _, id := range freeIDs {
-		if HarnessOnly(id) {
-			continue
-		}
-		row := Row{ModelID: id}
-		if s, ok := byModel[id]; ok {
+func freeRows(free []FreeModel, byModel map[string]float64) []Row {
+	cands := make([]freeRow, 0, len(free))
+	for _, f := range free {
+		row := Row{ModelID: f.ID}
+		if s, ok := byModel[f.ID]; ok {
 			row.Score, row.Scored = s, true
 		}
-		rows = append(rows, row)
+		cands = append(cands, freeRow{row, f.Tools})
 	}
-	return top10(sortRowsFree(rows))
+	return top10(sortFree(cands))
 }
 
 // sortRows orders scored models by composite descending; unscored models
@@ -377,24 +414,6 @@ func sortRows(rows []Row, priceOnly bool) {
 		}
 		return byPct(a, b)
 	})
-}
-
-// sortRowsFree orders free models: scored by benchmark descending, unscored
-// alphabetically after.
-func sortRowsFree(rows []Row) []Row {
-	slices.SortStableFunc(rows, func(a, b Row) int {
-		switch {
-		case a.Scored != b.Scored:
-			if a.Scored {
-				return -1
-			}
-			return 1
-		case a.Scored:
-			return byScoreDesc(a, b)
-		}
-		return cmp.Compare(a.ModelID, b.ModelID)
-	})
-	return rows
 }
 
 // byScoreDesc orders rows by benchmark score, highest first.

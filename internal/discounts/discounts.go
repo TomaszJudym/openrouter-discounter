@@ -63,7 +63,24 @@ type Benchmarks struct {
 
 // Architecture describes the model's input/output capabilities.
 type Architecture struct {
+	InputModalities  []string `json:"input_modalities"`
 	OutputModalities []string `json:"output_modalities"`
+}
+
+// TextOnly reports whether the model is a pure text model: no image or video
+// input (vision) and no output besides text. Unlisted modalities count as text.
+func (m Model) TextOnly() bool {
+	for _, in := range m.Architecture.InputModalities {
+		if in == "image" || in == "video" {
+			return false
+		}
+	}
+	for _, out := range m.Architecture.OutputModalities {
+		if out != "text" {
+			return false
+		}
+	}
+	return true
 }
 
 // Reasoning is the catalog's reasoning-capability marker.

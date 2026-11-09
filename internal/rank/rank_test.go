@@ -2,6 +2,7 @@ package rank
 
 import (
 	"context"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -45,7 +46,7 @@ func TestRankScoredOrderingAndUnscoredLast(t *testing.T) {
 	if math.Sector != Math || len(math.Rows) != 3 || math.Err != "" {
 		t.Fatalf("Math sector = %+v, want 3 rows, no error", math)
 	}
-	// composite = 0.65×score + 0.35×(−Δ%): a = 57.28, b = 47.48; unscored c last
+	// composite = 0.5×score + 0.5×(−Δ%): a = 55.6, b = 38.6; unscored c last
 	want := []struct {
 		id     string
 		score  float64
@@ -116,11 +117,11 @@ func TestRankTopTenCap(t *testing.T) {
 }
 
 func TestCodeFreeRankedByScore(t *testing.T) {
-	free := []string{
+	free := freeOf(
 		"meta/llama-4-scout:free",
 		"google/gemini-2.5-flash:free",
 		"openai/gpt-oss-120b:free",
-	}
+	)
 	p := fakeProvider{scores: map[Sector]map[string]float64{
 		CodeFree: {
 			"google/gemini-2.5-flash:free": 88.4,
@@ -154,8 +155,27 @@ func TestCodeFreeRankedByScore(t *testing.T) {
 	}
 }
 
+// freeOf builds free candidates without tool support.
+func freeOf(ids ...string) []FreeModel {
+	out := make([]FreeModel, len(ids))
+	for i, id := range ids {
+		out[i] = FreeModel{ID: id}
+	}
+	return out
+}
+
+func TestCodeFreeToolsFirst(t *testing.T) {
+	free := []FreeModel{{ID: "a/strong:free"}, {ID: "b/weak:free", Tools: true}, {ID: "c/unscored:free", Tools: true}, {ID: "d/unscored:free"}}
+	p := fakeProvider{scores: map[Sector]map[string]float64{CodeFree: {"a/strong:free": 90, "b/weak:free": 10}}}
+	cf := Rank(t.Context(), nil, free, p).Sectors[4]
+	want := []string{"b/weak:free", "a/strong:free", "c/unscored:free", "d/unscored:free"}
+	if ids := idsOf(cf.Rows); !slices.Equal(ids, want) {
+		t.Errorf("order = %v, want %v (scored first, tools first within)", ids, want)
+	}
+}
+
 func TestCodeFreeNoScoresFallback(t *testing.T) {
-	free := []string{"z/model-z:free", "a/model-a:free"}
+	free := freeOf("z/model-z:free", "a/model-a:free")
 	res := Rank(t.Context(), nil, free, fakeProvider{})
 	cf := res.Sectors[4]
 	if cf.Err != noScoresMessage {
@@ -171,9 +191,9 @@ func TestCodeFreeNoScoresFallback(t *testing.T) {
 }
 
 func TestCodeFreeTopTenCap(t *testing.T) {
-	free := make([]string, 12)
+	free := make([]FreeModel, 12)
 	for i := range free {
-		free[i] = string(rune('a'+i)) + "/m:free"
+		free[i] = FreeModel{ID: string(rune('a'+i)) + "/m:free"}
 	}
 	res := Rank(t.Context(), nil, free, fakeProvider{})
 	cf := res.Sectors[4]
@@ -184,7 +204,7 @@ func TestCodeFreeTopTenCap(t *testing.T) {
 
 func TestCodeFreeSourceError(t *testing.T) {
 	p := fakeProvider{errs: map[Sector]string{CodeFree: "Epoch down"}}
-	res := Rank(t.Context(), nil, []string{"a/b:free"}, p)
+	res := Rank(t.Context(), nil, freeOf("a/b:free"), p)
 	cf := res.Sectors[4]
 	if cf.Err != "Epoch down" || cf.Source != src {
 		t.Errorf("Err/Source = %q/%q, want Epoch down/%s", cf.Err, cf.Source, src)
@@ -257,15 +277,20 @@ func TestSelectExpensiveLongOrder(t *testing.T) {
 		thinkingModel("b/strong", 90),
 		thinkingModel("c/mid", 70),
 		thinkingModel("d/free:free", 99),
+		thinkingModel("e/weakest", 40),
+		thinkingModel("f/nothink", 95),
 	}
-	got := SelectExpensiveLong(models, nil)
-	if ids := idsOf(got.Rows); len(ids) != 3 || ids[0] != "b/strong" || ids[1] != "c/mid" || ids[2] != "a/weak" {
-		t.Errorf("no-discount order = %v, want strength order [b, c, a]", ids)
+	models[5].Reasoning = nil
+	if got := SelectExpensiveLong(models, nil); got.Rows != nil {
+		t.Errorf("no-discount rows = %v, want nil", got.Rows)
 	}
-	discs := []discounts.Discount{{ModelID: "a/weak", Pct: -50}, {ModelID: "b/strong", Pct: -10}}
-	got = SelectExpensiveLong(models, discs)
-	if ids := idsOf(got.Rows); ids[0] != "a/weak" || ids[1] != "b/strong" || ids[2] != "c/mid" {
-		t.Errorf("discount order = %v, want deepest discount first [a, b, c]", ids)
+	discs := []discounts.Discount{
+		{ModelID: "a/weak", Pct: -50}, {ModelID: "b/strong", Pct: -10}, {ModelID: "c/mid", Pct: -10},
+		{ModelID: "d/free:free", Pct: -90}, {ModelID: "e/weakest", Pct: -80}, {ModelID: "f/nothink", Pct: -70},
+	}
+	got := SelectExpensiveLong(models, discs)
+	if ids := idsOf(got.Rows); !slices.Equal(ids, []string{"a/weak", "b/strong", "c/mid"}) {
+		t.Errorf("order = %v, want 3 strongest discounted thinking, deepest discount first [a, b, c]", ids)
 	}
 }
 
@@ -434,7 +459,7 @@ func TestSelectStrongestDiscountModelMissing(t *testing.T) {
 // tools marks a catalog model as tool-calling capable.
 var tools = []string{"tools", "tool_choice"}
 
-func TestSelectFreeDiscoRequiresTools(t *testing.T) {
+func TestSelectFreeDiscoPrefersTools(t *testing.T) {
 	models := []discounts.Model{
 		{ID: "a/notools:free", SupportedParameters: []string{"temperature"}},
 		{ID: "b/tools:free", SupportedParameters: tools},
@@ -443,8 +468,21 @@ func TestSelectFreeDiscoRequiresTools(t *testing.T) {
 	freeIDs := []string{"a/notools:free", "b/tools:free", "c/nil:free"}
 	intel := map[string]float64{"a/notools:free": 90, "b/tools:free": 10, "c/nil:free": 80}
 	got := SelectFreeDisco(freeIDs, models, intel)
-	if len(got.Rows) != 1 || got.Rows[0].ModelID != "b/tools:free" {
-		t.Errorf("Rows = %+v, want only b/tools:free", got.Rows)
+	if ids := idsOf(got.Rows); !slices.Equal(ids, []string{"b/tools:free", "a/notools:free", "c/nil:free"}) {
+		t.Errorf("order = %v, want tools first, then by score", ids)
+	}
+}
+
+func TestSelectFreeDiscoSkipsVision(t *testing.T) {
+	vision := discounts.Architecture{InputModalities: []string{"text", "image"}, OutputModalities: []string{"text"}}
+	text := discounts.Architecture{InputModalities: []string{"text"}, OutputModalities: []string{"text"}}
+	models := []discounts.Model{
+		{ID: "a/vision:free", SupportedParameters: tools, Architecture: vision},
+		{ID: "b/text:free", SupportedParameters: tools, Architecture: text},
+	}
+	got := SelectFreeDisco([]string{"a/vision:free", "b/text:free"}, models, map[string]float64{"a/vision:free": 90, "b/text:free": 10})
+	if ids := idsOf(got.Rows); !slices.Equal(ids, []string{"b/text:free"}) {
+		t.Errorf("rows = %v, want only b/text:free", ids)
 	}
 }
 
@@ -488,7 +526,7 @@ func TestFreeSectorsSkipHarnessOnly(t *testing.T) {
 		t.Errorf("SelectFreeDisco rows = %+v, want only a/chat:free", got.Rows)
 	}
 
-	res := Rank(t.Context(), nil, freeIDs, fakeProvider{scores: map[Sector]map[string]float64{CodeFree: scores}})
+	res := Rank(t.Context(), nil, TextFree(freeIDs, models), fakeProvider{scores: map[Sector]map[string]float64{CodeFree: scores}})
 	for _, sr := range res.Sectors {
 		if sr.Sector != CodeFree {
 			continue

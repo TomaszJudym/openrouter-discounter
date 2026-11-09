@@ -343,3 +343,24 @@ func TestDetectCarriesCompletion(t *testing.T) {
 		t.Errorf("base completion fallback = %v, want 3", got[1].Completion)
 	}
 }
+
+func TestTextOnly(t *testing.T) {
+	tests := []struct {
+		name string
+		arch Architecture
+		want bool
+	}{
+		{"unlisted", Architecture{}, true},
+		{"text", Architecture{InputModalities: []string{"text", "file"}, OutputModalities: []string{"text"}}, true},
+		{"image input", Architecture{InputModalities: []string{"text", "image"}, OutputModalities: []string{"text"}}, false},
+		{"video input", Architecture{InputModalities: []string{"video", "text"}}, false},
+		{"image output", Architecture{InputModalities: []string{"text"}, OutputModalities: []string{"text", "image"}}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := (Model{Architecture: tt.arch}).TextOnly(); got != tt.want {
+				t.Errorf("TextOnly() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}

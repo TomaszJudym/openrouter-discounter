@@ -69,61 +69,45 @@ type presetSpec struct {
 	topP             float64
 	frequencyPenalty float64
 	presencePenalty  float64
+	minP             float64
+	maxTokens        int
+}
+
+// persona is the spec shared by the Disco Elysium persona presets.
+// Frequency penalty stays 0: it grows with every repeat of a token, so over a
+// long reply (reasoning tokens included) every common token ends up penalized
+// and the output collapses into rare-word salad. Temperature stays at 1 and
+// presence penalty low for the same reason; top_p and min_p cut the
+// low-probability tail the salad is drawn from. Effort high instead of max
+// keeps reasoning short; max_tokens bounds a runaway reply.
+func persona(prompt string) presetSpec {
+	return presetSpec{
+		systemPrompt:     prompt,
+		effort:           "high",
+		reasoningEnabled: true,
+		sampling:         true,
+		minP:             0.05,
+		maxTokens:        16384,
+		temperature:      1.0,
+		topP:             0.95,
+		frequencyPenalty: 0,
+		presencePenalty:  0.1,
+	}
 }
 
 // specs maps sectors to their preset specifications.
 var specs = map[rank.Sector]presetSpec{
-	rank.Math:          {systemPrompt: systemPrompt, reasoningEnabled: false},
-	rank.LCR:           {systemPrompt: systemPrompt, reasoningEnabled: false},
-	rank.Finance:       {systemPrompt: systemPrompt, reasoningEnabled: false},
-	rank.Code:          {systemPrompt: systemPrompt, reasoningEnabled: false},
-	rank.CodeFree:      {systemPrompt: systemPrompt, reasoningEnabled: false},
-	rank.ExpensiveLong: {systemPrompt: systemPrompt, reasoningEnabled: false},
-	rank.StrongestDiscountHalflight: {
-		systemPrompt:     halflightPrompt,
-		reasoningEnabled: true,
-		sampling:         true,
-		temperature:      1.15,
-		topP:             0.95,
-		frequencyPenalty: 0.4,
-		presencePenalty:  0.4,
-	},
-	rank.StrongestDiscountVolition: {
-		systemPrompt:     volitionPrompt,
-		reasoningEnabled: true,
-		sampling:         true,
-		temperature:      1.15,
-		topP:             0.95,
-		frequencyPenalty: 0.4,
-		presencePenalty:  0.4,
-	},
-	rank.StrongestDiscountInlandEmpire: {
-		systemPrompt:     inlandempirePrompt,
-		reasoningEnabled: true,
-		sampling:         true,
-		temperature:      1.15,
-		topP:             0.95,
-		frequencyPenalty: 0.4,
-		presencePenalty:  0.4,
-	},
-	rank.StrongestDiscountShivers: {
-		systemPrompt:     shiversPrompt,
-		reasoningEnabled: true,
-		sampling:         true,
-		temperature:      1.15,
-		topP:             0.95,
-		frequencyPenalty: 0.4,
-		presencePenalty:  0.4,
-	},
-	rank.FreeHalflight: {
-		systemPrompt:     halflightPrompt,
-		reasoningEnabled: true,
-		sampling:         true,
-		temperature:      1.15,
-		topP:             0.95,
-		frequencyPenalty: 0.4,
-		presencePenalty:  0.4,
-	},
+	rank.Math:                          {systemPrompt: systemPrompt, reasoningEnabled: false},
+	rank.LCR:                           {systemPrompt: systemPrompt, reasoningEnabled: false},
+	rank.Finance:                       {systemPrompt: systemPrompt, reasoningEnabled: false},
+	rank.Code:                          {systemPrompt: systemPrompt, reasoningEnabled: false},
+	rank.CodeFree:                      {systemPrompt: systemPrompt, reasoningEnabled: false},
+	rank.ExpensiveLong:                 {systemPrompt: systemPrompt, reasoningEnabled: false},
+	rank.StrongestDiscountHalflight:    persona(halflightPrompt),
+	rank.StrongestDiscountVolition:     persona(volitionPrompt),
+	rank.StrongestDiscountInlandEmpire: persona(inlandempirePrompt),
+	rank.StrongestDiscountShivers:      persona(shiversPrompt),
+	rank.FreeHalflight:                 persona(halflightPrompt),
 	// Task presets: none talks to the user, so none carries a prompt.
 	rank.HermesDelegate: {hermes: true, effort: "medium"},
 	rank.HermesReview:   {hermes: true, effort: "medium"},
@@ -177,6 +161,8 @@ type version struct {
 		TopP             *float64 `json:"top_p,omitempty"`
 		FrequencyPenalty *float64 `json:"frequency_penalty,omitempty"`
 		PresencePenalty  *float64 `json:"presence_penalty,omitempty"`
+		MinP             *float64 `json:"min_p,omitempty"`
+		MaxTokens        *int     `json:"max_tokens,omitempty"`
 	} `json:"config"`
 }
 
@@ -277,19 +263,29 @@ func reasoningMatches(v version, spec presetSpec) bool {
 }
 
 func samplingMatches(v version, spec presetSpec) bool {
-	if v.Config.Temperature == nil || *v.Config.Temperature != spec.temperature {
-		return false
+	return floatIs(v.Config.Temperature, spec.temperature) &&
+		floatIs(v.Config.TopP, spec.topP) &&
+		floatIs(v.Config.FrequencyPenalty, spec.frequencyPenalty) &&
+		floatIs(v.Config.PresencePenalty, spec.presencePenalty) &&
+		floatIs(v.Config.MinP, spec.minP) &&
+		intIs(v.Config.MaxTokens, spec.maxTokens)
+}
+
+// floatIs reports whether a stored value equals want; an absent value counts
+// as 0, since the API may drop zero-valued sampling fields.
+func floatIs(p *float64, want float64) bool {
+	if p == nil {
+		return want == 0
 	}
-	if v.Config.TopP == nil || *v.Config.TopP != spec.topP {
-		return false
+	return *p == want
+}
+
+// intIs is floatIs for integer fields.
+func intIs(p *int, want int) bool {
+	if p == nil {
+		return want == 0
 	}
-	if v.Config.FrequencyPenalty == nil || *v.Config.FrequencyPenalty != spec.frequencyPenalty {
-		return false
-	}
-	if v.Config.PresencePenalty == nil || *v.Config.PresencePenalty != spec.presencePenalty {
-		return false
-	}
-	return true
+	return *p == want
 }
 
 func (c *Client) current(ctx context.Context, slug string) (*version, error) {
@@ -342,6 +338,8 @@ func makeBody(spec presetSpec, models []string) map[string]any {
 		body["top_p"] = spec.topP
 		body["frequency_penalty"] = spec.frequencyPenalty
 		body["presence_penalty"] = spec.presencePenalty
+		body["min_p"] = spec.minP
+		body["max_tokens"] = spec.maxTokens
 	}
 	return body
 }

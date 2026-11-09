@@ -231,26 +231,32 @@ func TestStrongestDiscountPostBody(t *testing.T) {
 	if body["verbosity"] != "low" {
 		t.Errorf("verbosity = %v, want low", body["verbosity"])
 	}
-	// reasoning = {effort: max, enabled: true}
+	// reasoning = {effort: high, enabled: true}
 	reas := body["reasoning"].(map[string]any)
-	if reas["effort"] != "max" {
-		t.Errorf("reasoning.effort = %v, want max", reas["effort"])
+	if reas["effort"] != "high" {
+		t.Errorf("reasoning.effort = %v, want high", reas["effort"])
 	}
 	if reas["enabled"] != true {
 		t.Errorf("reasoning.enabled = %v, want true", reas["enabled"])
 	}
 	// sampling params
-	if body["temperature"] != 1.15 {
-		t.Errorf("temperature = %v, want 1.15", body["temperature"])
+	if body["temperature"] != 1.0 {
+		t.Errorf("temperature = %v, want 1.0", body["temperature"])
 	}
 	if body["top_p"] != 0.95 {
 		t.Errorf("top_p = %v, want 0.95", body["top_p"])
 	}
-	if body["frequency_penalty"] != 0.4 {
-		t.Errorf("frequency_penalty = %v, want 0.4", body["frequency_penalty"])
+	if body["frequency_penalty"] != 0.0 {
+		t.Errorf("frequency_penalty = %v, want 0", body["frequency_penalty"])
 	}
-	if body["presence_penalty"] != 0.4 {
-		t.Errorf("presence_penalty = %v, want 0.4", body["presence_penalty"])
+	if body["presence_penalty"] != 0.1 {
+		t.Errorf("presence_penalty = %v, want 0.1", body["presence_penalty"])
+	}
+	if body["min_p"] != 0.05 {
+		t.Errorf("min_p = %v, want 0.05", body["min_p"])
+	}
+	if body["max_tokens"] != 16384.0 {
+		t.Errorf("max_tokens = %v, want 16384", body["max_tokens"])
 	}
 }
 
@@ -282,17 +288,17 @@ func TestStrongestDiscountVolitionPostBody(t *testing.T) {
 	if m0["content"] != volitionPrompt {
 		t.Errorf("system prompt = %q, want volition prompt", m0["content"])
 	}
-	// reasoning = {effort: max, enabled: true}
+	// reasoning = {effort: high, enabled: true}
 	reas := body["reasoning"].(map[string]any)
-	if reas["effort"] != "max" {
-		t.Errorf("reasoning.effort = %v, want max", reas["effort"])
+	if reas["effort"] != "high" {
+		t.Errorf("reasoning.effort = %v, want high", reas["effort"])
 	}
 	if reas["enabled"] != true {
 		t.Errorf("reasoning.enabled = %v, want true", reas["enabled"])
 	}
 	// sampling params (same config as halflight)
-	if body["temperature"] != 1.15 {
-		t.Errorf("temperature = %v, want 1.15", body["temperature"])
+	if body["temperature"] != 1.0 {
+		t.Errorf("temperature = %v, want 1.0", body["temperature"])
 	}
 }
 
@@ -320,8 +326,10 @@ func TestAdmechPostBodyUnchanged(t *testing.T) {
 	if _, ok := body["frequency_penalty"]; ok {
 		t.Error("frequency_penalty key present, want absent")
 	}
-	if _, ok := body["presence_penalty"]; ok {
-		t.Error("presence_penalty key present, want absent")
+	for _, k := range []string{"presence_penalty", "min_p", "max_tokens"} {
+		if _, ok := body[k]; ok {
+			t.Errorf("%s key present, want absent", k)
+		}
 	}
 	// reasoning = {effort: max} without enabled
 	reas := body["reasoning"].(map[string]any)
@@ -338,17 +346,21 @@ func matchingStrongestDiscountVersion() presetResponse {
 	r.Data.DesignatedVersion.SystemPrompt = halflightPrompt
 	r.Data.DesignatedVersion.Config.Models = []string{"google/gemini-2.5-pro", "openai/o3", "anthropic/claude-opus-4"}
 	r.Data.DesignatedVersion.Config.Verbosity = verbosity
-	r.Data.DesignatedVersion.Config.Reasoning.Effort = reasoningEffort
+	r.Data.DesignatedVersion.Config.Reasoning.Effort = "high"
 	enabled := true
 	r.Data.DesignatedVersion.Config.Reasoning.Enabled = &enabled
-	temp := 1.15
+	temp := 1.0
 	r.Data.DesignatedVersion.Config.Temperature = &temp
 	topP := 0.95
 	r.Data.DesignatedVersion.Config.TopP = &topP
-	freq := 0.4
+	freq := 0.0
 	r.Data.DesignatedVersion.Config.FrequencyPenalty = &freq
-	pres := 0.4
+	pres := 0.1
 	r.Data.DesignatedVersion.Config.PresencePenalty = &pres
+	minP := 0.05
+	r.Data.DesignatedVersion.Config.MinP = &minP
+	maxTok := 16384
+	r.Data.DesignatedVersion.Config.MaxTokens = &maxTok
 	return r
 }
 
@@ -371,7 +383,7 @@ func TestStrongestDiscountSkipsWhenUnchanged(t *testing.T) {
 func TestStrongestDiscountPostsWhenTemperatureDiffers(t *testing.T) {
 	rec := &recorder{}
 	cur := matchingStrongestDiscountVersion()
-	temp := 1.0
+	temp := 1.15
 	cur.Data.DesignatedVersion.Config.Temperature = &temp
 	c := serverFor(t, rec, &cur, http.StatusOK)
 	updated, err := c.Update(t.Context(), strongestDiscountRows())
@@ -463,14 +475,14 @@ func TestStrongestDiscountInlandEmpirePostBody(t *testing.T) {
 		t.Errorf("system prompt = %q, want inlandempire prompt", m0["content"])
 	}
 	reas := body["reasoning"].(map[string]any)
-	if reas["effort"] != "max" {
-		t.Errorf("reasoning.effort = %v, want max", reas["effort"])
+	if reas["effort"] != "high" {
+		t.Errorf("reasoning.effort = %v, want high", reas["effort"])
 	}
 	if reas["enabled"] != true {
 		t.Errorf("reasoning.enabled = %v, want true", reas["enabled"])
 	}
-	if body["temperature"] != 1.15 {
-		t.Errorf("temperature = %v, want 1.15", body["temperature"])
+	if body["temperature"] != 1.0 {
+		t.Errorf("temperature = %v, want 1.0", body["temperature"])
 	}
 }
 
@@ -502,14 +514,14 @@ func TestStrongestDiscountShiversPostBody(t *testing.T) {
 		t.Errorf("system prompt = %q, want shivers prompt", m0["content"])
 	}
 	reas := body["reasoning"].(map[string]any)
-	if reas["effort"] != "max" {
-		t.Errorf("reasoning.effort = %v, want max", reas["effort"])
+	if reas["effort"] != "high" {
+		t.Errorf("reasoning.effort = %v, want high", reas["effort"])
 	}
 	if reas["enabled"] != true {
 		t.Errorf("reasoning.enabled = %v, want true", reas["enabled"])
 	}
-	if body["temperature"] != 1.15 {
-		t.Errorf("temperature = %v, want 1.15", body["temperature"])
+	if body["temperature"] != 1.0 {
+		t.Errorf("temperature = %v, want 1.0", body["temperature"])
 	}
 }
 
@@ -604,5 +616,16 @@ func TestHermesSkipsWhenUnchanged(t *testing.T) {
 		if err != nil || updated != tt.updated {
 			t.Errorf("%s: Update() = %v, %v; want %v, nil", tt.name, updated, err, tt.updated)
 		}
+	}
+}
+
+func TestStrongestDiscountSkipsWhenZeroPenaltyAbsent(t *testing.T) {
+	rec := &recorder{}
+	cur := matchingStrongestDiscountVersion()
+	cur.Data.DesignatedVersion.Config.FrequencyPenalty = nil
+	c := serverFor(t, rec, &cur, http.StatusOK)
+	updated, err := c.Update(t.Context(), strongestDiscountRows())
+	if err != nil || updated {
+		t.Fatalf("Update() = %v, %v, want false (absent penalty means 0)", updated, err)
 	}
 }

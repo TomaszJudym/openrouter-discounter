@@ -86,9 +86,15 @@ the category's score. `expensive-long` routes the 3 strongest discounted
 thinking models (catalog AA Intelligence Index, no price ceilings), ordered
 deepest discount first. `strongest-discount-half-light` routes to the top-3 strongest-thinking
 (catalog AA Intelligence Index) discounted chat models, carries the HALF-LIGHT persona
-prompt with reasoning effort max and verbosity low, and adds sampling settings
-(temperature 1.15, top_p 0.95, frequency_penalty 0.4, presence_penalty 0.4) for more
-varied, less mechanical replies than the other presets.
+prompt with reasoning effort high and verbosity low, and adds sampling settings
+(temperature 1.0, top_p 0.95, min_p 0.05, frequency_penalty 0,
+presence_penalty 0.1, max_tokens 16384); the other strongest-discount-* and
+`halflight-free` presets share them. Frequency penalty stays 0 and temperature
+at 1: higher values (previously 1.15 / 0.4) penalize every common token over a
+long reply, reasoning included, and the output collapses into word salad that
+then poisons the rest of the session. min_p cuts the low-probability tail that
+salad is drawn from; max_tokens bounds a runaway reply. Every persona prompt
+states that the persona shapes tone only.
 Unscored models are skipped; if none of a category's models scored, that
 preset is left untouched.
 

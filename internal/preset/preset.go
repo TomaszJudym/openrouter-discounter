@@ -57,7 +57,12 @@ const reasoningEffort = "max"
 
 // presetSpec holds per-preset configuration.
 type presetSpec struct {
-	systemPrompt     string
+	systemPrompt string
+	// hermes marks a Hermes Agent preset: no verbosity, and no system
+	// message at all when systemPrompt is empty (Hermes sends its own).
+	hermes bool
+	// effort overrides reasoningEffort when non-empty.
+	effort           string
 	reasoningEnabled bool
 	sampling         bool // whether to include sampling params
 	temperature      float64
@@ -119,33 +124,22 @@ var specs = map[rank.Sector]presetSpec{
 		frequencyPenalty: 0.4,
 		presencePenalty:  0.4,
 	},
-	rank.FreeVolition: {
-		systemPrompt:     volitionPrompt,
-		reasoningEnabled: true,
-		sampling:         true,
-		temperature:      1.15,
-		topP:             0.95,
-		frequencyPenalty: 0.4,
-		presencePenalty:  0.4,
-	},
-	rank.FreeInlandEmpire: {
-		systemPrompt:     inlandempirePrompt,
-		reasoningEnabled: true,
-		sampling:         true,
-		temperature:      1.15,
-		topP:             0.95,
-		frequencyPenalty: 0.4,
-		presencePenalty:  0.4,
-	},
-	rank.FreeShivers: {
-		systemPrompt:     shiversPrompt,
-		reasoningEnabled: true,
-		sampling:         true,
-		temperature:      1.15,
-		topP:             0.95,
-		frequencyPenalty: 0.4,
-		presencePenalty:  0.4,
-	},
+	// Only hermes-main talks to the user, so only it carries a persona; the
+	// task presets send no prompt.
+	rank.HermesMain:     {hermes: true, systemPrompt: halflightPrompt, effort: "high"},
+	rank.HermesDelegate: {hermes: true, effort: "medium"},
+	rank.HermesReview:   {hermes: true, effort: "medium"},
+	rank.HermesCompress: {hermes: true, effort: "low"},
+	rank.HermesVision:   {hermes: true, effort: "none"},
+	rank.HermesLight:    {hermes: true, effort: "none"},
+}
+
+// effortFor is the spec's reasoning effort, defaulting to reasoningEffort.
+func effortFor(spec presetSpec) string {
+	if spec.effort != "" {
+		return spec.effort
+	}
+	return reasoningEffort
 }
 
 // Slugs maps ranked sectors to the user's preset slugs.
@@ -161,9 +155,12 @@ var Slugs = map[rank.Sector]string{
 	rank.StrongestDiscountInlandEmpire: "strongest-discount-inlandempire",
 	rank.StrongestDiscountShivers:      "strongest-discount-shivers",
 	rank.FreeHalflight:                 "halflight-free",
-	rank.FreeVolition:                  "volition-free",
-	rank.FreeInlandEmpire:              "inlandempire-free",
-	rank.FreeShivers:                   "shivers-free",
+	rank.HermesMain:                    "hermes-main",
+	rank.HermesDelegate:                "hermes-delegate",
+	rank.HermesVision:                  "hermes-vision",
+	rank.HermesCompress:                "hermes-compress",
+	rank.HermesReview:                  "hermes-review",
+	rank.HermesLight:                   "hermes-light",
 }
 
 // TopN is how many models each preset routes.
@@ -214,6 +211,10 @@ func (c *Client) Update(ctx context.Context, sr rank.SectorResult) (bool, error)
 	if !ok {
 		return false, fmt.Errorf("no preset slug for sector %q", sr.Sector)
 	}
+	spec, ok := specs[sr.Sector]
+	if !ok {
+		return false, fmt.Errorf("no spec for sector %q", sr.Sector)
+	}
 	models := topScored(sr.Rows, TopN)
 	if len(models) == 0 {
 		return false, nil
@@ -222,10 +223,10 @@ func (c *Client) Update(ctx context.Context, sr rank.SectorResult) (bool, error)
 	if err != nil {
 		return false, err
 	}
-	if cur != nil && sameVersion(*cur, models, sr.Sector) {
+	if cur != nil && sameVersion(*cur, models, spec) {
 		return false, nil
 	}
-	if err := c.post(ctx, slug, models, sr.Sector); err != nil {
+	if err := c.post(ctx, slug, models, spec); err != nil {
 		return false, err
 	}
 	return true, nil
@@ -246,21 +247,21 @@ func topScored(rows []rank.Row, n int) []string {
 }
 
 // sameVersion reports whether the designated version already matches.
-func sameVersion(v version, models []string, sector rank.Sector) bool {
-	spec, ok := specs[sector]
-	if !ok {
-		return false
-	}
+func sameVersion(v version, models []string, spec presetSpec) bool {
 	if !slices.Equal(v.Config.Models, models) {
 		return false
 	}
-	if strings.TrimSpace(v.SystemPrompt) != spec.systemPrompt {
+	wantPrompt, wantVerbosity := spec.systemPrompt, verbosity
+	if spec.hermes {
+		wantVerbosity = ""
+	}
+	if strings.TrimSpace(v.SystemPrompt) != wantPrompt {
 		return false
 	}
 	if !reasoningMatches(v, spec) {
 		return false
 	}
-	if v.Config.Verbosity != verbosity {
+	if v.Config.Verbosity != wantVerbosity {
 		return false
 	}
 	if spec.sampling && !samplingMatches(v, spec) {
@@ -275,7 +276,7 @@ func reasoningMatches(v version, spec presetSpec) bool {
 			return false
 		}
 	}
-	return v.Config.Reasoning.Effort == reasoningEffort
+	return v.Config.Reasoning.Effort == effortFor(spec)
 }
 
 func samplingMatches(v version, spec presetSpec) bool {
@@ -320,15 +321,24 @@ func (c *Client) current(ctx context.Context, slug string) (*version, error) {
 }
 
 func makeBody(spec presetSpec, models []string) map[string]any {
-	reasoning := map[string]any{"effort": reasoningEffort}
+	reasoning := map[string]any{"effort": effortFor(spec)}
 	if spec.reasoningEnabled {
 		reasoning["enabled"] = true
 	}
+	// The endpoint validates as a chat completion, so messages is always
+	// sent. Only a system message is stored as the preset prompt; a
+	// prompt-less preset gets a transient user message that is not stored.
+	msg := map[string]string{"role": "system", "content": spec.systemPrompt}
+	if spec.hermes && spec.systemPrompt == "" {
+		msg = map[string]string{"role": "user", "content": "."}
+	}
 	body := map[string]any{
-		"messages":  []map[string]string{{"role": "system", "content": spec.systemPrompt}},
+		"messages":  []map[string]string{msg},
 		"models":    models,
-		"verbosity": verbosity,
 		"reasoning": reasoning,
+	}
+	if !spec.hermes {
+		body["verbosity"] = verbosity
 	}
 	if spec.sampling {
 		body["temperature"] = spec.temperature
@@ -339,11 +349,7 @@ func makeBody(spec presetSpec, models []string) map[string]any {
 	return body
 }
 
-func (c *Client) post(ctx context.Context, slug string, models []string, sector rank.Sector) error {
-	spec, ok := specs[sector]
-	if !ok {
-		return fmt.Errorf("no spec for sector %q", sector)
-	}
+func (c *Client) post(ctx context.Context, slug string, models []string, spec presetSpec) error {
 	body := makeBody(spec, models)
 	bodyBytes, err := json.Marshal(body)
 	if err != nil {

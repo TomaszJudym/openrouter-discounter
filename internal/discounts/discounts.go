@@ -83,6 +83,11 @@ func (m Model) TextOnly() bool {
 	return true
 }
 
+// Vision reports whether the model accepts image input.
+func (m Model) Vision() bool {
+	return slices.Contains(m.Architecture.InputModalities, "image")
+}
+
 // Reasoning is the catalog's reasoning-capability marker.
 type Reasoning struct {
 	Mandatory bool `json:"mandatory"`
@@ -132,6 +137,7 @@ type Model struct {
 	Reasoning           *Reasoning   `json:"reasoning"`
 	SupportedParameters []string     `json:"supported_parameters"`
 	Architecture        Architecture `json:"architecture"`
+	ContextLength       int          `json:"context_length"`
 }
 
 type response struct {

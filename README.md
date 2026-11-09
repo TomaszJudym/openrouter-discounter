@@ -50,10 +50,10 @@ Each category has one score per model, 0–100:
 Ranking:
 
 ```
-final = 0.5 × score + 0.5 × (−Δ%)
+final = 0.75 × score + 0.25 × (−Δ%)
 ```
 
-Score and price weigh equally. Prices are USD per Mtok prompt; Δ% is
+Score weighs 75%, discount 25%. Prices are USD per Mtok prompt; Δ% is
 the discount vs the provider's list price. Top 10 per category are sent.
 Unscored models rank last, by discount. A model keeps its best score across
 reasoning-effort variants; a `:free` id shares its base model's benchmark
@@ -78,7 +78,7 @@ The error text has the AA key removed and is truncated to 120 chars.
 With `OPENROUTER_API_KEY` set, each run also repoints the OpenRouter presets
 `admech-math`, `admech-long`, `admech-finance`, `admech-code`, and
 `admech-code-free` at the 3 best of the category's top-10 table — the same
-composite ranking as the report (0.5 benchmark + 0.5 discount), scored on
+composite ranking as the report (0.75 benchmark + 0.25 discount), scored on
 the category's score. `expensive-long` routes the 3 strongest discounted
 thinking models (catalog AA Intelligence Index, no price ceilings), ordered
 deepest discount first. `strongest-discount-half-light` routes to the top-3 strongest-thinking
@@ -89,7 +89,7 @@ varied, less mechanical replies than the other presets.
 Unscored models are skipped; if none of a category's models scored, that
 preset is left untouched.
 
-Free presets (`admech-code-free`, `*-free` personas) skip `:free` endpoints
+Free presets (`admech-code-free`, `halflight-free`) skip `:free` endpoints
 restricted to agentic harnesses, which fail in the OpenRouter web chat. The
 API exposes no flag for this; the denylist `harnessOnly` in
 `internal/rank/rank.go` is curated from each model page's warning
@@ -107,6 +107,55 @@ a new server-side designated version — nothing is stored or committed here.
 A preset whose designated version already matches is not re-posted. Failures
 and missing `OPENROUTER_API_KEY` are logged and never block the Telegram
 report.
+
+## Hermes role presets
+
+Six presets carry one [Hermes Agent](https://github.com/NousResearch/hermes-agent)
+model slot each. Hermes points at them once and follows the daily update with
+no local cron. Only `hermes-main` talks to the user, so only it carries a
+system prompt (HALF-LIGHT persona); OpenRouter merges it with the one Hermes
+sends. The five task presets send no prompt, so summaries, titles, verdicts
+and skill files stay unstyled. No verbosity and no sampling overrides (tool
+calls need default temperature). The 3 listed models double as OpenRouter
+fallback order.
+
+| preset | Hermes slot | filter | quality | effort |
+|---|---|---|---|---|
+| `hermes-main` | `model.default` | tools, thinking, ctx ≥ 256k | AA Intelligence Index | high |
+| `hermes-delegate` | `delegation.model` | tools | Epoch WebDev Arena (≥ 3 scored), else II | medium |
+| `hermes-vision` | `auxiliary.vision` | image input | II | none |
+| `hermes-compress` | `auxiliary.compression` | ctx ≥ 1M | II | low |
+| `hermes-review` | `auxiliary.background_review`, `curator` | tools | II | medium |
+| `hermes-light` | `auxiliary.title_generation`, `session_search`, `approval`, `goal_judge` | II ≥ 20 | cheapness `100·(1 − blended/0.6)` | none |
+
+Pool: affordable discounted rows (≤ $0.5 prompt / $1 completion per Mtok),
+no `:free`/`:batch`, positive catalog II. Quality is min–max scaled within
+each role (except cheapness, scaled to the ceiling); blended price is
+0.8 × prompt + 0.2 × completion. Rank = 0.75 × quality + 0.25 × (−Δ%).
+Roles pick in table order; a model already #1 in an earlier role loses 15
+points, so it repeats only when clearly best. Hermes' own per-request
+`reasoning_effort` overrides the preset effort.
+
+`~/.hermes/config.yaml`:
+
+```yaml
+model:
+  provider: openrouter
+  default: "@preset/hermes-main"
+  context_length: 256000   # preset names defeat auto-detection
+delegation:
+  provider: openrouter
+  model: "@preset/hermes-delegate"
+auxiliary:
+  vision:            { provider: openrouter, model: "@preset/hermes-vision" }
+  compression:       { provider: openrouter, model: "@preset/hermes-compress" }
+  background_review: { provider: openrouter, model: "@preset/hermes-review" }
+  curator:           { provider: openrouter, model: "@preset/hermes-review" }
+  title_generation:  { provider: openrouter, model: "@preset/hermes-light" }
+  session_search:    { provider: openrouter, model: "@preset/hermes-light" }
+  approval:          { provider: openrouter, model: "@preset/hermes-light" }
+  goal_judge:        { provider: openrouter, model: "@preset/hermes-light" }
+```
 
 ## Development
 

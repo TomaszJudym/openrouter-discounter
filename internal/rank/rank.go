@@ -28,42 +28,30 @@ const (
 	StrongestDiscountInlandEmpire Sector = "strongest-discount-inlandempire"
 	StrongestDiscountShivers      Sector = "strongest-discount-shivers"
 	FreeHalflight                 Sector = "free-halflight"
-	FreeVolition                  Sector = "free-volition"
-	FreeInlandEmpire              Sector = "free-inlandempire"
-	FreeShivers                   Sector = "free-shivers"
 )
+
+// labels are the display headers of the non-hermes sectors.
+var labels = map[Sector]string{
+	Math:                          "MATH — top 10 discounted (Epoch OTIS Mock AIME)",
+	LCR:                           "LONG-CONTEXT — top 10 discounted (OpenRouter popularity)",
+	Finance:                       "FINANCE — top 10 discounted (AA Finance & Accounting)",
+	Code:                          "CODE — top 10 discounted (Epoch WebDev Arena)",
+	CodeFree:                      "CODE-FREE — top 10 free coding models (Epoch WebDev Arena)",
+	ExpensiveLong:                 "EXPENSIVE-LONG — top 3 strongest thinking discounted",
+	StrongestDiscountHalflight:    "STRONGEST-DISCOUNT-HALFLIGHT — top 3 strongest-thinking discounted",
+	StrongestDiscountVolition:     "STRONGEST-DISCOUNT-VOLITION — top 3 strongest-thinking discounted",
+	StrongestDiscountInlandEmpire: "STRONGEST-DISCOUNT-INLANDEMPIRE — top 3 strongest-thinking discounted",
+	StrongestDiscountShivers:      "STRONGEST-DISCOUNT-SHIVERS — top 3 strongest-thinking discounted",
+	FreeHalflight:                 "FREE-HALFLIGHT — top 3 free models (AA Intelligence Index)",
+}
 
 // Label is the display header for the sector.
 func (s Sector) Label() string {
-	switch s {
-	case Math:
-		return "MATH — top 10 discounted (Epoch OTIS Mock AIME)"
-	case LCR:
-		return "LONG-CONTEXT — top 10 discounted (OpenRouter popularity)"
-	case Finance:
-		return "FINANCE — top 10 discounted (AA Finance & Accounting)"
-	case Code:
-		return "CODE — top 10 discounted (Epoch WebDev Arena)"
-	case CodeFree:
-		return "CODE-FREE — top 10 free coding models (Epoch WebDev Arena)"
-	case ExpensiveLong:
-		return "EXPENSIVE-LONG — top 3 strongest thinking discounted"
-	case StrongestDiscountHalflight:
-		return "STRONGEST-DISCOUNT-HALFLIGHT — top 3 strongest-thinking discounted"
-	case StrongestDiscountVolition:
-		return "STRONGEST-DISCOUNT-VOLITION — top 3 strongest-thinking discounted"
-	case StrongestDiscountInlandEmpire:
-		return "STRONGEST-DISCOUNT-INLANDEMPIRE — top 3 strongest-thinking discounted"
-	case StrongestDiscountShivers:
-		return "STRONGEST-DISCOUNT-SHIVERS — top 3 strongest-thinking discounted"
-	case FreeHalflight:
-		return "FREE-HALFLIGHT — top 3 free models (AA Intelligence Index)"
-	case FreeVolition:
-		return "FREE-VOLITION — top 3 free models (AA Intelligence Index)"
-	case FreeInlandEmpire:
-		return "FREE-INLANDEMPIRE — top 3 free models (AA Intelligence Index)"
-	case FreeShivers:
-		return "FREE-SHIVERS — top 3 free models (AA Intelligence Index)"
+	if l, ok := labels[s]; ok {
+		return l
+	}
+	if strings.HasPrefix(string(s), "hermes-") {
+		return strings.ToUpper(string(s)) + " — top 3 for the Hermes role"
 	}
 	return string(s)
 }
@@ -73,8 +61,8 @@ var Sectors = []Sector{Math, LCR, Finance, Code, CodeFree}
 
 // scoreWeight is the share of the sector score in the composite ranking
 // score; the remainder weights the discount (−Δ%). Both terms are 0-100, so
-// 0.5 weights benchmark and price equally.
-const scoreWeight = 0.5
+// 0.75 weights benchmark 75% and discount 25%.
+const scoreWeight = 0.75
 
 // Row is one ranked model. Price and Was are USD per Mtok; Pct is negative
 // for a discount. Score is the sector score (0-100) when Scored.
@@ -147,6 +135,9 @@ const NoSourceName = "score source"
 // Result is the full ranking.
 type Result struct {
 	Sectors []SectorResult
+	// Scores is every source's raw per-sector scores, for selections (the
+	// hermes roles) that reuse them without a second fetch.
+	Scores map[Sector]SectorScores
 }
 
 // SelectExpensiveLong picks the 3 strongest discounted thinking-capable
@@ -337,7 +328,7 @@ func sortFree(cands []freeRow) []Row {
 // with a notice.
 func Rank(ctx context.Context, discs []discounts.Discount, free []FreeModel, prov Provider) Result {
 	scores := prov.Scores(ctx)
-	var res Result
+	res := Result{Scores: scores}
 	for _, sec := range Sectors {
 		sr, byModel := sectorBase(sec, scores)
 		if sec == CodeFree {

@@ -100,6 +100,9 @@ func run() error {
 	if intelOK && len(freeSectors) > 0 {
 		sectors = append(sectors, freeSectors...)
 	}
+	if intelOK {
+		sectors = append(sectors, hermesSectors(models, discs, intel, res.Scores[rank.Code].ByModel)...)
+	}
 	updatePresets(ctx, hc, sectors)
 	return nil
 }
@@ -154,7 +157,7 @@ func intelligence(models []discounts.Model) map[string]float64 {
 	return out
 }
 
-// buildIntelSectors creates the strongest-discount and free-tier disco preset results
+// buildIntelSectors creates the strongest-discount and halflight-free preset result
 // when intelligence scores are available. Returns the strongest-discount sectors first
 // (for Telegram) and free-tier sectors second (for presets only).
 func buildIntelSectors(models []discounts.Model, discs []discounts.Discount, freeIDs []string, intel map[string]float64, intelOK bool) (sdSectors, freeSectors []rank.SectorResult) {
@@ -174,20 +177,24 @@ func buildIntelSectors(models []discounts.Model, discs []discounts.Discount, fre
 	return sdSectors, freeSectors
 }
 
-// buildFreeDiscoSectors creates the four free-tier disco preset results from the
-// top 3 free models ranked by the catalog's AA Intelligence Index. All four personas share the
-// same model list.
+// buildFreeDiscoSectors creates the halflight-free preset result from the
+// top 3 free models ranked by the catalog's AA Intelligence Index.
 func buildFreeDiscoSectors(freeIDs []string, models []discounts.Model, intel map[string]float64) []rank.SectorResult {
 	base := rank.SelectFreeDisco(freeIDs, models, intel)
 	if len(base.Rows) == 0 {
 		return nil
 	}
-	return []rank.SectorResult{
-		base,
-		{Sector: rank.FreeVolition, Rows: base.Rows},
-		{Sector: rank.FreeInlandEmpire, Rows: base.Rows},
-		{Sector: rank.FreeShivers, Rows: base.Rows},
+	return []rank.SectorResult{base}
+}
+
+// hermesSectors selects the per-role Hermes presets and logs each role's
+// #1 pick with its quality source.
+func hermesSectors(models []discounts.Model, discs []discounts.Discount, intel, code map[string]float64) []rank.SectorResult {
+	out := rank.SelectHermes(models, discs, intel, code)
+	for _, sr := range out {
+		log.Printf("%s: #1 %s (%s %.1f)", sr.Sector, sr.Rows[0].ModelID, sr.Source, sr.Rows[0].Score)
 	}
+	return out
 }
 
 // updatePresets points each category's preset at its top 3 models: the

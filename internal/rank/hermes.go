@@ -10,7 +10,6 @@ import (
 
 // Hermes role sectors: one preset per Hermes Agent model slot.
 const (
-	HermesMain     Sector = "hermes-main"
 	HermesDelegate Sector = "hermes-delegate"
 	HermesVision   Sector = "hermes-vision"
 	HermesCompress Sector = "hermes-compress"
@@ -30,7 +29,6 @@ const (
 	// diversityPenalty is subtracted from the composite of a model already
 	// #1 in an earlier role, so it repeats only when clearly best.
 	diversityPenalty = 15.0
-	mainMinContext   = 256_000
 	compressMinCtx   = 1_000_000
 	lightMinII       = 20.0
 	// minCodeScored is how many code-scored candidates the delegate role
@@ -64,9 +62,6 @@ type role struct {
 // hermesRoles lists the roles in pick order: earlier roles claim their #1
 // first, later roles pay the diversity penalty for reusing it.
 var hermesRoles = []role{
-	{HermesMain, func(c candidate) bool {
-		return c.model.ToolCalling() && c.model.Thinking() && c.model.ContextLength >= mainMinContext
-	}},
 	{HermesDelegate, func(c candidate) bool { return c.model.ToolCalling() }},
 	{HermesVision, func(c candidate) bool { return c.model.Vision() }},
 	{HermesCompress, func(c candidate) bool { return c.model.ContextLength >= compressMinCtx }},

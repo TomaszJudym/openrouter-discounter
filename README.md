@@ -30,7 +30,10 @@ presets  ◄── POST openrouter.ai/api/v1/presets/{slug}/chat/completions
    - `AA_API_KEY` — free key from artificialanalysis.ai (Insights Platform →
      API key). Optional; without it, the finance category ranks by discount
      only. The free tier is enough (the `/free` model list).
-   - `OPENROUTER_API_KEY` — key from openrouter.ai/keys. Optional; updates
+   - `OPENROUTER_MANAGEMENT_KEY` — a read-write **management** key from
+     openrouter.ai/settings/management-keys; it both reads and writes
+     presets (an inference key from openrouter.ai/keys gets
+     `401 Invalid management key` on every write). Optional; updates
      the `admech-math` / `admech-long` / `admech-finance` / `admech-code`
      / `admech-code-free` / `expensive-long` presets with each category's
      top 3.
@@ -75,7 +78,7 @@ The error text has the AA key removed and is truncated to 120 chars.
 
 ## Preset updates
 
-With `OPENROUTER_API_KEY` set, each run also repoints the OpenRouter presets
+With `OPENROUTER_MANAGEMENT_KEY` set, each run also repoints the OpenRouter presets
 `admech-math`, `admech-long`, `admech-finance`, `admech-code`, and
 `admech-code-free` at the 3 best of the category's top-10 table — the same
 composite ranking as the report (0.75 benchmark + 0.25 discount), scored on
@@ -104,24 +107,25 @@ when the catalog lists `tools` in its `supported_parameters`.
 Each update POSTs the new model list plus the shared system prompt and
 `verbosity: low` to `api/v1/presets/{slug}/chat/completions`, which creates
 a new server-side designated version — nothing is stored or committed here.
-A preset whose designated version already matches is not re-posted. Failures
-and missing `OPENROUTER_API_KEY` are logged and never block the Telegram
-report.
+A preset whose designated version already matches is not re-posted. Presets
+update after the Telegram send, so they never block the report. Every preset
+is attempted; any failure (e.g. `401 Invalid management key`) is logged and
+then exits the run nonzero, so the CI job goes red. A missing
+`OPENROUTER_MANAGEMENT_KEY` only skips the updates.
 
 ## Hermes role presets
 
-Six presets carry one [Hermes Agent](https://github.com/NousResearch/hermes-agent)
-model slot each. Hermes points at them once and follows the daily update with
-no local cron. Only `hermes-main` talks to the user, so only it carries a
-system prompt (HALF-LIGHT persona); OpenRouter merges it with the one Hermes
-sends. The five task presets send no prompt, so summaries, titles, verdicts
-and skill files stay unstyled. No verbosity and no sampling overrides (tool
+Five presets carry one [Hermes Agent](https://github.com/NousResearch/hermes-agent)
+task slot each. Hermes points at them once and follows the daily update with
+no local cron. The main (talking) model is not managed here; point
+`model.default` at any other preset. None of the task slots talks to the
+user, so the presets send no prompt and summaries, titles, verdicts and
+skill files stay unstyled. No verbosity and no sampling overrides (tool
 calls need default temperature). The 3 listed models double as OpenRouter
 fallback order.
 
 | preset | Hermes slot | filter | quality | effort |
 |---|---|---|---|---|
-| `hermes-main` | `model.default` | tools, thinking, ctx ≥ 256k | AA Intelligence Index | high |
 | `hermes-delegate` | `delegation.model` | tools | Epoch WebDev Arena (≥ 3 scored), else II | medium |
 | `hermes-vision` | `auxiliary.vision` | image input | II | none |
 | `hermes-compress` | `auxiliary.compression` | ctx ≥ 1M | II | low |
@@ -141,7 +145,7 @@ points, so it repeats only when clearly best. Hermes' own per-request
 ```yaml
 model:
   provider: openrouter
-  default: "@preset/hermes-main"
+  default: "@preset/<your main preset>"
   context_length: 256000   # preset names defeat auto-detection
 delegation:
   provider: openrouter

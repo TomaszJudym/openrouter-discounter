@@ -62,7 +62,6 @@ func TestSelectHermesFilters(t *testing.T) {
 		sec  Sector
 		want []string
 	}{
-		{HermesMain, []string{"a/all", "d/weak"}},                   // tools+think+ctx≥256k
 		{HermesDelegate, []string{"a/all", "c/smallctx", "d/weak"}}, // tools; a leads past the penalty
 		{HermesVision, []string{"a/all", "d/weak"}},                 // image input
 		{HermesCompress, []string{"a/all", "b/notools", "d/weak"}},  // ctx≥1M
@@ -94,23 +93,23 @@ func TestSelectHermesLightCheapest(t *testing.T) {
 }
 
 func TestSelectHermesDiversityPenalty(t *testing.T) {
-	c := caps{ctx: 300_000, tools: true, think: true}
+	c := caps{ctx: 300_000, tools: true, vision: true}
 	models := []discounts.Model{hermesModel("a/top", c), hermesModel("b/close", c), hermesModel("c/far", c)}
 	discs := []discounts.Discount{disc("a/top", 0.1, 0.4), disc("b/close", 0.1, 0.4), disc("c/far", 0.1, 0.4)}
 	// scaled: a 100, b 90, c 0 — a loses 15 in later roles and drops below b
 	close := map[string]float64{"a/top": 30, "b/close": 29, "c/far": 20}
 	out := SelectHermes(models, discs, close, nil)
-	if got := roleIDs(out, HermesMain); got[0] != "a/top" {
-		t.Errorf("main #1 = %s, want a/top", got[0])
+	if got := roleIDs(out, HermesDelegate); got[0] != "a/top" {
+		t.Errorf("delegate #1 = %s, want a/top", got[0])
 	}
-	if got := roleIDs(out, HermesDelegate); got[0] != "b/close" {
-		t.Errorf("delegate #1 = %s, want b/close (a penalised)", got[0])
+	if got := roleIDs(out, HermesVision); got[0] != "b/close" {
+		t.Errorf("vision #1 = %s, want b/close (a penalised)", got[0])
 	}
 	// scaled: a 100, b 50 — a's 37.5-point composite lead survives the penalty
 	far := map[string]float64{"a/top": 30, "b/close": 25, "c/far": 20}
 	out = SelectHermes(models, discs, far, nil)
-	if got := roleIDs(out, HermesDelegate); got[0] != "a/top" {
-		t.Errorf("delegate #1 = %s, want a/top (lead > penalty)", got[0])
+	if got := roleIDs(out, HermesVision); got[0] != "a/top" {
+		t.Errorf("vision #1 = %s, want a/top (lead > penalty)", got[0])
 	}
 }
 

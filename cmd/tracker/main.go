@@ -7,6 +7,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -103,8 +104,9 @@ func run() error {
 	if intelOK {
 		sectors = append(sectors, hermesSectors(models, discs, intel, res.Scores[rank.Code].ByModel)...)
 	}
-	updatePresets(ctx, hc, sectors)
-	return nil
+	// Presets update after the Telegram send, so a failure here never costs
+	// the report, but it fails the run so CI shows it.
+	return updatePresets(ctx, hc, sectors)
 }
 
 // rankSectors scores the sectors from their sources — Epoch AI (math,
@@ -201,24 +203,31 @@ func hermesSectors(models []discounts.Model, discs []discounts.Discount, intel, 
 // admech-* presets follow the discounted rankings; expensive-long follows
 // the strongest discounted thinking models, deepest discount first;
 // strongest-discount-* presets route to the top-3 strongest-thinking
-// discounted chat models (same models, distinct personas). Failures are
-// logged and non-fatal: the Telegram report is the primary output.
-func updatePresets(ctx context.Context, hc *http.Client, sectors []rank.SectorResult) {
-	key := os.Getenv("OPENROUTER_API_KEY")
+// discounted chat models (same models, distinct personas). Every preset is
+// attempted; the failures are joined into the returned error so the run
+// exits nonzero. A missing key only skips the updates.
+func updatePresets(ctx context.Context, hc *http.Client, sectors []rank.SectorResult) error {
+	key := os.Getenv("OPENROUTER_MANAGEMENT_KEY")
 	if key == "" {
-		log.Printf("OPENROUTER_API_KEY not set; presets not updated")
-		return
+		log.Printf("OPENROUTER_MANAGEMENT_KEY not set; presets not updated")
+		return nil
 	}
 	pc := preset.New(hc, key)
+	var errs []error
 	for _, sr := range sectors {
 		slug := preset.Slugs[sr.Sector]
 		updated, err := pc.Update(ctx, sr)
 		if err != nil {
 			log.Printf("preset %s: %v", slug, err)
+			errs = append(errs, fmt.Errorf("preset %s: %w", slug, err))
 			continue
 		}
 		if updated {
 			log.Printf("preset %s: new version with top-%d models", slug, preset.TopN)
 		}
 	}
+	if len(errs) > 0 {
+		return fmt.Errorf("%d of %d preset updates failed: %w", len(errs), len(sectors), errors.Join(errs...))
+	}
+	return nil
 }

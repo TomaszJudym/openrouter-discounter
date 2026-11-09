@@ -523,7 +523,7 @@ func fmtModels(v any) []string {
 }
 
 func hermesRows() rank.SectorResult {
-	return rank.SectorResult{Sector: rank.HermesMain, Rows: []rank.Row{
+	return rank.SectorResult{Sector: rank.HermesDelegate, Rows: []rank.Row{
 		{ModelID: "a/one", Score: 100, Scored: true},
 		{ModelID: "b/two", Score: 60, Scored: true},
 		{ModelID: "c/three", Score: 10, Scored: true},
@@ -531,7 +531,7 @@ func hermesRows() rank.SectorResult {
 }
 
 func TestHermesSlugsAndSpecs(t *testing.T) {
-	for _, sec := range []rank.Sector{rank.HermesMain, rank.HermesDelegate, rank.HermesVision, rank.HermesCompress, rank.HermesReview, rank.HermesLight} {
+	for _, sec := range []rank.Sector{rank.HermesDelegate, rank.HermesVision, rank.HermesCompress, rank.HermesReview, rank.HermesLight} {
 		if got := Slugs[sec]; got != string(sec) {
 			t.Errorf("Slugs[%s] = %q, want %q", sec, got, sec)
 		}
@@ -539,12 +539,8 @@ func TestHermesSlugsAndSpecs(t *testing.T) {
 		if !ok || !spec.hermes || spec.effort == "" || spec.sampling {
 			t.Errorf("specs[%s] = %+v, want hermes with an effort, no sampling", sec, spec)
 		}
-		wantPrompt := ""
-		if sec == rank.HermesMain {
-			wantPrompt = halflightPrompt
-		}
-		if spec.systemPrompt != wantPrompt {
-			t.Errorf("specs[%s].systemPrompt = %.40q, want %.40q", sec, spec.systemPrompt, wantPrompt)
+		if spec.systemPrompt != "" {
+			t.Errorf("specs[%s].systemPrompt = %.40q, want empty", sec, spec.systemPrompt)
 		}
 	}
 }
@@ -571,16 +567,6 @@ func postHermes(t *testing.T, sr rank.SectorResult) map[string]any {
 	return body
 }
 
-func TestHermesMainPostsHalflight(t *testing.T) {
-	body := postHermes(t, hermesRows())
-	if got := body["messages"].([]any)[0].(map[string]any)["content"]; got != halflightPrompt {
-		t.Errorf("system prompt = %.40q, want halflight", got)
-	}
-	if eff := body["reasoning"].(map[string]any)["effort"]; eff != "high" {
-		t.Errorf("reasoning.effort = %v, want high", eff)
-	}
-}
-
 func TestHermesTaskPresetsPostNoPrompt(t *testing.T) {
 	sr := hermesRows()
 	sr.Sector = rank.HermesCompress
@@ -598,7 +584,7 @@ func hermesVersion(prompt string) *presetResponse {
 	var cur presetResponse
 	cur.Data.DesignatedVersion.SystemPrompt = prompt
 	cur.Data.DesignatedVersion.Config.Models = []string{"a/one", "b/two", "c/three"}
-	cur.Data.DesignatedVersion.Config.Reasoning.Effort = "high"
+	cur.Data.DesignatedVersion.Config.Reasoning.Effort = "medium"
 	return &cur
 }
 
@@ -608,9 +594,8 @@ func TestHermesSkipsWhenUnchanged(t *testing.T) {
 		prompt  string
 		updated bool
 	}{
-		{"halflight kept", halflightPrompt, false},
-		{"other persona", shiversPrompt, true},
-		{"no prompt", "", true},
+		{"no prompt kept", "", false},
+		{"stale prompt", shiversPrompt, true},
 	}
 	for _, tt := range tests {
 		rec := &recorder{}

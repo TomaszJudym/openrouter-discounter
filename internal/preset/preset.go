@@ -124,9 +124,7 @@ var specs = map[rank.Sector]presetSpec{
 		frequencyPenalty: 0.4,
 		presencePenalty:  0.4,
 	},
-	// Only hermes-main talks to the user, so only it carries a persona; the
-	// task presets send no prompt.
-	rank.HermesMain:     {hermes: true, systemPrompt: halflightPrompt, effort: "high"},
+	// Task presets: none talks to the user, so none carries a prompt.
 	rank.HermesDelegate: {hermes: true, effort: "medium"},
 	rank.HermesReview:   {hermes: true, effort: "medium"},
 	rank.HermesCompress: {hermes: true, effort: "low"},
@@ -155,7 +153,6 @@ var Slugs = map[rank.Sector]string{
 	rank.StrongestDiscountInlandEmpire: "strongest-discount-inlandempire",
 	rank.StrongestDiscountShivers:      "strongest-discount-shivers",
 	rank.FreeHalflight:                 "halflight-free",
-	rank.HermesMain:                    "hermes-main",
 	rank.HermesDelegate:                "hermes-delegate",
 	rank.HermesVision:                  "hermes-vision",
 	rank.HermesCompress:                "hermes-compress",

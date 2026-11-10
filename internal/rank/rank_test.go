@@ -459,17 +459,22 @@ func TestSelectStrongestDiscountModelMissing(t *testing.T) {
 // tools marks a catalog model as tool-calling capable.
 var tools = []string{"tools", "tool_choice"}
 
-func TestSelectFreeDiscoPrefersTools(t *testing.T) {
+func TestSelectFreeDiscoRequiresWebSearch(t *testing.T) {
 	models := []discounts.Model{
 		{ID: "a/notools:free", SupportedParameters: []string{"temperature"}},
 		{ID: "b/tools:free", SupportedParameters: tools},
 		{ID: "c/nil:free"},
+		{ID: "d/native:free", SupportedParameters: []string{"web_search_options"}},
 	}
-	freeIDs := []string{"a/notools:free", "b/tools:free", "c/nil:free"}
-	intel := map[string]float64{"a/notools:free": 90, "b/tools:free": 10, "c/nil:free": 80}
+	freeIDs := []string{"a/notools:free", "b/tools:free", "c/nil:free", "d/native:free"}
+	intel := map[string]float64{"a/notools:free": 90, "b/tools:free": 10, "c/nil:free": 80, "d/native:free": 70}
 	got := SelectFreeDisco(freeIDs, models, intel)
-	if ids := idsOf(got.Rows); !slices.Equal(ids, []string{"b/tools:free", "a/notools:free", "c/nil:free"}) {
-		t.Errorf("order = %v, want tools first, then by score", ids)
+	if ids := idsOf(got.Rows); !slices.Equal(ids, []string{"b/tools:free", "d/native:free"}) {
+		t.Errorf("order = %v, want web-search models only, tools first", ids)
+	}
+	cf := Rank(t.Context(), nil, TextFree(freeIDs, models), fakeProvider{}).Sectors[4]
+	if ids := idsOf(cf.Rows); !slices.Equal(ids, []string{"b/tools:free", "d/native:free"}) {
+		t.Errorf("CodeFree rows = %v, want web-search models only", ids)
 	}
 }
 

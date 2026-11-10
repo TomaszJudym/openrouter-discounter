@@ -236,9 +236,10 @@ type FreeModel struct {
 	Tools bool
 }
 
-// TextFree keeps the :free ids usable for text chat: listed in the catalog,
-// not harness-only, and TextOnly (no vision input, text-only output). Order
-// is kept; Tools marks tool-calling support for later prioritisation.
+// TextFree keeps the :free ids usable for text chat with web search: listed
+// in the catalog, not harness-only, TextOnly (no vision input, text-only
+// output), and WebSearch-capable. Order is kept; Tools marks tool-calling
+// support for later prioritisation.
 func TextFree(freeIDs []string, models []discounts.Model) []FreeModel {
 	catalog := make(map[string]discounts.Model, len(models))
 	for _, m := range models {
@@ -250,7 +251,7 @@ func TextFree(freeIDs []string, models []discounts.Model) []FreeModel {
 			continue
 		}
 		m, ok := catalog[id]
-		if !ok || !m.TextOnly() {
+		if !ok || !m.TextOnly() || !m.WebSearch() {
 			continue
 		}
 		out = append(out, FreeModel{ID: id, Tools: m.ToolCalling()})

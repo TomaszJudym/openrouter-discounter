@@ -120,6 +120,13 @@ func (m Model) ToolCalling() bool {
 	return slices.Contains(m.SupportedParameters, "tools")
 }
 
+// WebSearch reports whether the model can search the web: natively
+// (web_search_options) or through the openrouter:web_search server tool,
+// which needs tool calling. Searches are billed even on :free models.
+func (m Model) WebSearch() bool {
+	return m.ToolCalling() || slices.Contains(m.SupportedParameters, "web_search_options")
+}
+
 // Override is one tiered-pricing entry; only entries with a utc_days window
 // are time-limited discounts — volume and context tiers carry none.
 type Override struct {

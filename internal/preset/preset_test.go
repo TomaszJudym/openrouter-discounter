@@ -629,3 +629,105 @@ func TestStrongestDiscountSkipsWhenZeroPenaltyAbsent(t *testing.T) {
 		t.Fatalf("Update() = %v, %v, want false (absent penalty means 0)", updated, err)
 	}
 }
+
+// pinnedRows are paid discount rows: each pinned to its cheapest endpoint.
+// b's endpoint also serves a, so b is skipped and d fills the third slot.
+func pinnedRows() rank.SectorResult {
+	return rank.SectorResult{Sector: rank.Math, Rows: []rank.Row{
+		{ModelID: "a/m", Endpoint: "gmi/fp8", Serves: []string{"gmi/fp8", "deepinfra/fp8"}, Score: 90, Scored: true,
+			PeakPrompt: 0.2, PeakCompletion: 0.8},
+		{ModelID: "b/m", Endpoint: "deepinfra/fp8", Serves: []string{"deepinfra/fp8"}, Score: 80, Scored: true},
+		{ModelID: "c/m", Endpoint: "gmi/fp8", Serves: []string{"gmi/fp8"}, Score: 70, Scored: true},
+		{ModelID: "d/m", Endpoint: "novita/bf16", Serves: []string{"novita/bf16"}, Score: 60, Scored: true,
+			PeakPrompt: 0.3, PeakCompletion: 0.5},
+	}}
+}
+
+func TestUpdatePinsOneEndpointPerModel(t *testing.T) {
+	rec := &recorder{}
+	c := serverFor(t, rec, nil, http.StatusNotFound)
+	if _, err := c.Update(t.Context(), pinnedRows()); err != nil {
+		t.Fatalf("Update() error = %v, want nil", err)
+	}
+	if len(rec.postBodies) != 1 {
+		t.Fatalf("POST count = %d, want 1", len(rec.postBodies))
+	}
+	body := rec.postBodies[0]
+	if got, want := fmtModels(body["models"]), []string{"a/m", "c/m", "d/m"}; !slices.Equal(got, want) {
+		t.Errorf("models = %v, want %v (b's endpoint serves a)", got, want)
+	}
+	prov, ok := body["provider"].(map[string]any)
+	if !ok {
+		t.Fatalf("provider = %v, want pinned config", body["provider"])
+	}
+	if got, want := fmtModels(prov["only"]), []string{"gmi/fp8", "novita/bf16"}; !slices.Equal(got, want) {
+		t.Errorf("provider.only = %v, want %v", got, want)
+	}
+	if prov["allow_fallbacks"] != false {
+		t.Errorf("provider.allow_fallbacks = %v, want false", prov["allow_fallbacks"])
+	}
+	// highest peak per rate across the pinned models, +1%, rounded up
+	caps, _ := prov["max_price"].(map[string]any)
+	if caps["prompt"] != 0.3030 || caps["completion"] != 0.8080 {
+		t.Errorf("provider.max_price = %v, want prompt 0.303, completion 0.808", prov["max_price"])
+	}
+}
+
+func TestUpdateUnpinnedRowsSendNoProvider(t *testing.T) {
+	rec := &recorder{}
+	c := serverFor(t, rec, nil, http.StatusNotFound)
+	if _, err := c.Update(t.Context(), mathRows()); err != nil {
+		t.Fatalf("Update() error = %v, want nil", err)
+	}
+	if _, ok := rec.postBodies[0]["provider"]; ok {
+		t.Error("provider key present for rows without endpoints, want absent")
+	}
+}
+
+func TestPinnedSkipsWhenUnchangedPostsWhenFallbacksOn(t *testing.T) {
+	cur := matchingVersion()
+	cur.Data.DesignatedVersion.Config.Models = []string{"a/m", "c/m", "d/m"}
+	cur.Data.DesignatedVersion.Config.Provider.Only = []string{"gmi/fp8", "novita/bf16"}
+	off := false
+	cur.Data.DesignatedVersion.Config.Provider.AllowFallbacks = &off
+	cur.Data.DesignatedVersion.Config.Provider.MaxPrice.Prompt = 0.303
+	cur.Data.DesignatedVersion.Config.Provider.MaxPrice.Completion = 0.808
+	rec := &recorder{}
+	if updated, err := serverFor(t, rec, &cur, http.StatusOK).Update(t.Context(), pinnedRows()); err != nil || updated {
+		t.Errorf("Update() = %v, %v, want false, nil (pin unchanged)", updated, err)
+	}
+	cur.Data.DesignatedVersion.Config.Provider.MaxPrice.Prompt = 0.5
+	rec = &recorder{}
+	if updated, err := serverFor(t, rec, &cur, http.StatusOK).Update(t.Context(), pinnedRows()); err != nil || !updated {
+		t.Errorf("Update() = %v, %v, want true, nil (max_price changed)", updated, err)
+	}
+	cur.Data.DesignatedVersion.Config.Provider.MaxPrice.Prompt = 0.303
+	on := true
+	cur.Data.DesignatedVersion.Config.Provider.AllowFallbacks = &on
+	rec = &recorder{}
+	if updated, err := serverFor(t, rec, &cur, http.StatusOK).Update(t.Context(), pinnedRows()); err != nil || !updated {
+		t.Errorf("Update() = %v, %v, want true, nil (fallbacks not disabled)", updated, err)
+	}
+}
+
+func TestPinnedVersionTolerantRoundTrip(t *testing.T) {
+	// stored version as the API might echo it: allow_fallbacks dropped as a
+	// zero value, max_price as decimal strings
+	body := `{"data":{"slug":"x","designated_version":{"system_prompt":` + mustJSON(systemPrompt) + `,
+		"config":{"models":["a/m","c/m","d/m"],"verbosity":"low","reasoning":{"effort":"max"},
+		"provider":{"only":["gmi/fp8","novita/bf16"],"max_price":{"prompt":"0.303","completion":"0.808"}}}}}}`
+	mux := http.NewServeMux()
+	posts := 0
+	mux.HandleFunc("GET /api/v1/presets/{slug}", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(body))
+	})
+	mux.HandleFunc("POST /api/v1/presets/{slug}/chat/completions", func(w http.ResponseWriter, _ *http.Request) {
+		posts++
+		_, _ = w.Write([]byte(`{}`))
+	})
+	srv := httptest.NewTestServer(t, mux)
+	c := &Client{hc: srv.Client(), key: "test-or-key", base: srv.URL + "/api/v1"}
+	if updated, err := c.Update(t.Context(), pinnedRows()); err != nil || updated || posts != 0 {
+		t.Errorf("Update() = %v, %v with %d POSTs, want false, nil, 0 (unchanged)", updated, err, posts)
+	}
+}

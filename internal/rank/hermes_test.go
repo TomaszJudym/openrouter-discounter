@@ -28,7 +28,14 @@ func hermesModel(id string, c caps) discounts.Model {
 }
 
 func disc(id string, prompt, completion float64) discounts.Discount {
-	return discounts.Discount{ModelID: id, Price: prompt, Completion: completion, Was: prompt * 2, Pct: -50}
+	// one tool-capable endpoint at half its list price; For re-prices it
+	// per role workload
+	now := discounts.Tariff{Base: discounts.Rates{Prompt: prompt, Completion: completion}}
+	o := discounts.Offer{Provider: "P", Endpoint: id + "@ep", Avg: now, Peak: now,
+		List: discounts.Tariff{Base: discounts.Rates{Prompt: 2 * prompt, Completion: 2 * completion}}, Tools: true}
+	d := discounts.Discount{ModelID: id, Serves: []string{o.Endpoint}, Offers: []discounts.Offer{o}}
+	d, _ = d.For(discounts.Require{}, discounts.DefaultWorkload)
+	return d
 }
 
 func roleIDs(out []SectorResult, sec Sector) []string {

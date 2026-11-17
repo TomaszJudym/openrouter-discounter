@@ -1,7 +1,12 @@
 // Package preset keeps the admech-* OpenRouter presets pointing at the top 3
-// ranked models of each category. Presets are versioned server-side: a POST
-// to the chat-completions skin creates a new designated version, so updates
-// are skipped when nothing changed.
+// ranked models of each category. Each paid model is pinned to its single
+// cheapest endpoint: provider.only lists those endpoint tags with
+// allow_fallbacks off, so a failing provider falls through to the next
+// model, never to another provider; provider.max_price caps the request at
+// the highest rate a pinned endpoint bills in the day, so a discount that
+// ends early falls through too instead of billing list price. Presets are versioned server-side: a
+// POST to the chat-completions skin creates a new designated version, so
+// updates are skipped when nothing changed.
 package preset
 
 import (
@@ -10,8 +15,10 @@ import (
 	"encoding/json/v2"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"slices"
+	"strconv"
 	"strings"
 
 	_ "embed"
@@ -151,7 +158,15 @@ type version struct {
 	Version      int    `json:"version"`
 	SystemPrompt string `json:"system_prompt"`
 	Config       struct {
-		Models    []string `json:"models"`
+		Models   []string `json:"models"`
+		Provider struct {
+			Only           []string `json:"only,omitzero"`
+			AllowFallbacks *bool    `json:"allow_fallbacks,omitzero"`
+			MaxPrice       struct {
+				Prompt     price `json:"prompt,omitzero"`
+				Completion price `json:"completion,omitzero"`
+			} `json:"max_price,omitzero"`
+		} `json:"provider,omitzero"`
 		Reasoning struct {
 			Effort  string `json:"effort,omitzero"`
 			Enabled *bool  `json:"enabled,omitzero"`
@@ -198,7 +213,7 @@ func (c *Client) Update(ctx context.Context, sr rank.SectorResult) (bool, error)
 	if !ok {
 		return false, fmt.Errorf("no spec for sector %q", sr.Sector)
 	}
-	models := topScored(sr.Rows, TopN)
+	models, p := topScored(sr.Rows, TopN)
 	if len(models) == 0 {
 		return false, nil
 	}
@@ -206,32 +221,74 @@ func (c *Client) Update(ctx context.Context, sr rank.SectorResult) (bool, error)
 	if err != nil {
 		return false, err
 	}
-	if cur != nil && sameVersion(*cur, models, spec) {
+	if cur != nil && sameVersion(*cur, models, p, spec) {
 		return false, nil
 	}
-	if err := c.post(ctx, slug, models, spec); err != nil {
+	if err := c.post(ctx, slug, models, p, spec); err != nil {
 		return false, err
 	}
 	return true, nil
 }
 
-// topScored takes the first n scored rows in ranking order.
-func topScored(rows []rank.Row, n int) []string {
-	out := make([]string, 0, n)
+// pin is a preset's provider routing: the endpoint tags allowed, and the
+// per-Mtok price caps. A zero pin routes unpinned.
+type pin struct {
+	only                     []string
+	maxPrompt, maxCompletion float64
+}
+
+// capMargin is the headroom over the highest pinned rate, so float noise in
+// the listed prices cannot reject a request at the expected price.
+const capMargin = 1.01
+
+// ceilCap rounds a cap up to 4 decimals of USD per Mtok; the product is
+// first rounded to 8 decimals so float noise (0.8×1.01 = 0.80800…01) does
+// not round up a whole step.
+func ceilCap(v float64) float64 { return math.Ceil(math.Round(v*capMargin*1e8)/1e4) / 1e4 }
+
+// topScored takes the first n scored rows in ranking order. When the rows
+// carry endpoints (paid discounts), only rows that pin without conflict are
+// taken (see rank.Pinnable); the pin lists their endpoint tags and caps the
+// price at their highest peak rates. Free rows have no endpoint and route
+// unpinned.
+func topScored(rows []rank.Row, n int) (models []string, p pin) {
+	scored := make([]rank.Row, 0, len(rows))
 	for _, r := range rows {
-		if len(out) == n {
-			break
-		}
 		if r.Scored {
-			out = append(out, r.ModelID)
+			scored = append(scored, r)
 		}
 	}
-	return out
+	pinned := slices.ContainsFunc(scored, func(r rank.Row) bool { return r.Endpoint != "" })
+	if pinned {
+		scored = rank.Pinnable(scored, n)
+	}
+	scored = scored[:min(n, len(scored))]
+	for _, r := range scored {
+		models = append(models, r.ModelID)
+		if !pinned {
+			continue
+		}
+		if !slices.Contains(p.only, r.Endpoint) {
+			p.only = append(p.only, r.Endpoint)
+		}
+		p.maxPrompt = max(p.maxPrompt, ceilCap(r.PeakPrompt))
+		p.maxCompletion = max(p.maxCompletion, ceilCap(r.PeakCompletion))
+	}
+	return models, p
 }
 
 // sameVersion reports whether the designated version already matches.
-func sameVersion(v version, models []string, spec presetSpec) bool {
-	if !slices.Equal(v.Config.Models, models) {
+func sameVersion(v version, models []string, p pin, spec presetSpec) bool {
+	pv := v.Config.Provider
+	if !slices.Equal(v.Config.Models, models) || !slices.Equal(pv.Only, p.only) {
+		return false
+	}
+	// an absent allow_fallbacks counts as false: the API may drop zero
+	// values (see floatIs), and a version without the pin fails on Only
+	if fb := pv.AllowFallbacks; len(p.only) > 0 && fb != nil && *fb {
+		return false
+	}
+	if float64(pv.MaxPrice.Prompt) != p.maxPrompt || float64(pv.MaxPrice.Completion) != p.maxCompletion {
 		return false
 	}
 	wantPrompt, wantVerbosity := spec.systemPrompt, verbosity
@@ -288,6 +345,20 @@ func intIs(p *int, want int) bool {
 	return *p == want
 }
 
+// price is a stored max_price value: a JSON number or a decimal string
+// (OpenRouter prices are strings elsewhere), so either form round-trips.
+type price float64
+
+// UnmarshalJSON accepts 0.303 and "0.303".
+func (p *price) UnmarshalJSON(b []byte) error {
+	v, err := strconv.ParseFloat(strings.Trim(string(b), `"`), 64)
+	if err != nil {
+		return fmt.Errorf("max_price %s: %w", b, err)
+	}
+	*p = price(v)
+	return nil
+}
+
 func (c *Client) current(ctx context.Context, slug string) (*version, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.base+"/presets/"+slug, nil)
 	if err != nil {
@@ -313,7 +384,7 @@ func (c *Client) current(ctx context.Context, slug string) (*version, error) {
 	return &r.Data.DesignatedVersion, nil
 }
 
-func makeBody(spec presetSpec, models []string) map[string]any {
+func makeBody(spec presetSpec, models []string, p pin) map[string]any {
 	reasoning := map[string]any{"effort": effortFor(spec)}
 	if spec.reasoningEnabled {
 		reasoning["enabled"] = true
@@ -330,6 +401,13 @@ func makeBody(spec presetSpec, models []string) map[string]any {
 		"models":    models,
 		"reasoning": reasoning,
 	}
+	if len(p.only) > 0 {
+		prov := map[string]any{"only": p.only, "allow_fallbacks": false}
+		if caps := maxPrice(p); len(caps) > 0 {
+			prov["max_price"] = caps
+		}
+		body["provider"] = prov
+	}
 	if !spec.hermes {
 		body["verbosity"] = verbosity
 	}
@@ -344,8 +422,21 @@ func makeBody(spec presetSpec, models []string) map[string]any {
 	return body
 }
 
-func (c *Client) post(ctx context.Context, slug string, models []string, spec presetSpec) error {
-	body := makeBody(spec, models)
+// maxPrice is the provider.max_price object; unknown (zero) caps are left
+// out rather than blocking every request.
+func maxPrice(p pin) map[string]float64 {
+	caps := make(map[string]float64, 2)
+	if p.maxPrompt > 0 {
+		caps["prompt"] = p.maxPrompt
+	}
+	if p.maxCompletion > 0 {
+		caps["completion"] = p.maxCompletion
+	}
+	return caps
+}
+
+func (c *Client) post(ctx context.Context, slug string, models []string, p pin, spec presetSpec) error {
+	body := makeBody(spec, models, p)
 	bodyBytes, err := json.Marshal(body)
 	if err != nil {
 		return fmt.Errorf("marshal: %w", err)

@@ -64,15 +64,25 @@ var Sectors = []Sector{Math, LCR, Finance, Code, CodeFree}
 // 0.75 weights benchmark 75% and discount 25%.
 const scoreWeight = 0.75
 
-// Row is one ranked model. Price and Was are USD per Mtok; Pct is negative
-// for a discount. Score is the sector score (0-100) when Scored.
+// Row is one ranked model. Price and Was are blended USD per Mtok; Pct is
+// negative for a discount. Provider names the priced endpoint, empty when
+// any provider gets the price; Endpoint is its tag to pin and Serves every
+// endpoint tag of the model (see Pinnable). Score is the sector score
+// (0-100) when Scored.
 type Row struct {
-	ModelID string
-	Price   float64
-	Was     float64
-	Pct     float64
-	Score   float64
-	Scored  bool
+	ModelID  string
+	Provider string
+	Endpoint string
+	Serves   []string
+	// PeakPrompt and PeakCompletion are the highest per-Mtok rates the
+	// pinned endpoint bills within the Horizon, for the preset max_price.
+	PeakPrompt     float64
+	PeakCompletion float64
+	Price          float64
+	Was            float64
+	Pct            float64
+	Score          float64
+	Scored         bool
 }
 
 // SectorResult is one sector's ranking. A non-empty Err marks the sector as
@@ -143,7 +153,9 @@ type Result struct {
 // SelectExpensiveLong picks the 3 strongest discounted thinking-capable
 // models (highest AA Intelligence Index among discounted, non-free,
 // non-batch rows with reasoning support), ordered deepest discount first;
-// ties keep strength order. Price ceilings do not apply.
+// ties keep strength order. Each model is re-picked for its Need (a 300k
+// request, so context tiers count and the endpoint must fit it). Price
+// ceilings do not apply.
 func SelectExpensiveLong(models []discounts.Model, discs []discounts.Discount) SectorResult {
 	catalog := make(map[string]discounts.Model, len(models))
 	for _, m := range models {
@@ -162,15 +174,19 @@ func SelectExpensiveLong(models []discounts.Model, discs []discounts.Discount) S
 		if ii <= 0 {
 			continue
 		}
-		rows = append(rows, Row{ModelID: d.ModelID, Price: d.Price, Was: d.Was, Pct: d.Pct, Score: ii, Scored: true})
+		p, ok := ExpensiveLong.pick(d)
+		if !ok {
+			continue
+		}
+		row := rowOf(p)
+		row.Score, row.Scored = ii, true
+		rows = append(rows, row)
 	}
 	if len(rows) == 0 {
 		return SectorResult{Sector: ExpensiveLong}
 	}
 	slices.SortStableFunc(rows, byScoreDesc)
-	if len(rows) > 3 {
-		rows = rows[:3]
-	}
+	rows = Pinnable(rows, 3)
 	slices.SortStableFunc(rows, byPct)
 	return SectorResult{Sector: ExpensiveLong, Rows: rows}
 }
@@ -178,8 +194,10 @@ func SelectExpensiveLong(models []discounts.Model, discs []discounts.Discount) S
 // SelectStrongestDiscount returns the top 3 discounted models with positive
 // thinking scores that can produce text output and call tools. Pool is the
 // discounted rows whose model satisfies ChatText() and ToolCalling() and whose
-// id does not end in :free or :batch. Only ids with a positive thinking score are included. Order is
-// strongest (highest score) to weakest, stable.
+// id does not end in :free or :batch, re-picked for the persona Need (a
+// tool-capable endpoint within the price ceilings). Only ids with a
+// positive thinking score are included. Order is strongest (highest score)
+// to weakest, stable.
 func SelectStrongestDiscount(models []discounts.Model, discs []discounts.Discount, thinking map[string]float64) SectorResult {
 	if len(thinking) == 0 {
 		return SectorResult{Sector: StrongestDiscountHalflight}
@@ -201,16 +219,19 @@ func SelectStrongestDiscount(models []discounts.Model, discs []discounts.Discoun
 		if !ok || score <= 0 {
 			continue
 		}
-		rows = append(rows, Row{ModelID: d.ModelID, Price: d.Price, Was: d.Was, Pct: d.Pct, Score: score, Scored: true})
+		p, ok := StrongestDiscountHalflight.pick(d)
+		if !ok {
+			continue
+		}
+		row := rowOf(p)
+		row.Score, row.Scored = score, true
+		rows = append(rows, row)
 	}
 	if len(rows) == 0 {
 		return SectorResult{Sector: StrongestDiscountHalflight}
 	}
 	slices.SortStableFunc(rows, byScoreDesc)
-	if len(rows) > 3 {
-		rows = rows[:3]
-	}
-	return SectorResult{Sector: StrongestDiscountHalflight, Rows: rows}
+	return SectorResult{Sector: StrongestDiscountHalflight, Rows: Pinnable(rows, 3)}
 }
 
 // harnessOnly lists :free endpoints restricted to agentic harnesses: they
@@ -363,7 +384,7 @@ func sectorBase(sec Sector, scores map[Sector]SectorScores) (SectorResult, map[s
 func discountRows(discs []discounts.Discount, byModel map[string]float64) []Row {
 	rows := make([]Row, 0, len(discs))
 	for _, d := range discs {
-		row := Row{ModelID: d.ModelID, Price: d.Price, Was: d.Was, Pct: d.Pct}
+		row := rowOf(d)
 		if s, ok := byModel[d.ModelID]; ok {
 			row.Score, row.Scored = s, true
 		}
@@ -465,6 +486,38 @@ func ScoreModels(cands []Candidate, scoreWeight, priceWeight float64) []string {
 		out[i] = cands[idx].ModelID
 	}
 	return out
+}
+
+// Pinnable takes, in order, the first n rows that can share one preset
+// pinned to exactly one endpoint per model: provider.only lists every
+// picked Endpoint with fallbacks off, so a row is skipped when its endpoint
+// also serves an already picked model, or a picked endpoint serves its
+// model — that model could then route to a provider other than its pick.
+// Two models may share one endpoint tag. Rows without an endpoint (free,
+// catalog-only) are skipped.
+func Pinnable(rows []Row, n int) []Row {
+	out := make([]Row, 0, n)
+	for _, r := range rows {
+		if len(out) == n {
+			break
+		}
+		if r.Endpoint == "" {
+			continue
+		}
+		if !slices.ContainsFunc(out, func(p Row) bool { return pinConflict(p, r) }) {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// pinConflict reports whether pinning a and b in one provider.only list
+// would let either model route to the other's endpoint.
+func pinConflict(a, b Row) bool {
+	if a.Endpoint == b.Endpoint {
+		return false
+	}
+	return slices.Contains(a.Serves, b.Endpoint) || slices.Contains(b.Serves, a.Endpoint)
 }
 
 func top10(rows []Row) []Row {

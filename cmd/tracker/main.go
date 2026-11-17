@@ -61,6 +61,7 @@ func run() error {
 		// are simply missing from the report
 		log.Printf("endpoint fetch failures (continuing): %v", err)
 	}
+	logWindows(discs)
 	// Selection sees only rows within the price ceilings; expensive-long
 	// picks from the full discounted set, ignoring the ceilings.
 	allDiscs := discs
@@ -132,6 +133,23 @@ func rankSectors(ctx context.Context, hc *http.Client, models []discounts.Model,
 		}
 	}
 	return res
+}
+
+// logWindows logs every discount that holds only during a UTC time window.
+func logWindows(discs []discounts.Discount) {
+	for _, d := range discs {
+		if d.Window != "" {
+			log.Printf("window discount %s via %s: %.0f%% during %s", d.ModelID, provider(d.Provider), d.Pct, d.Window)
+		}
+	}
+}
+
+// provider names a discount's endpoint; catalog rows price every provider.
+func provider(p string) string {
+	if p == "" {
+		return "any provider"
+	}
+	return p
 }
 
 // intelligence maps catalog ids to the AA Intelligence Index that the

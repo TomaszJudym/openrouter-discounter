@@ -21,7 +21,7 @@ const (
 const (
 	SourceIntelligence = "AA Intelligence Index"
 	SourceCode         = "Epoch WebDev Arena"
-	SourceCheapness    = "price per Mtok"
+	SourceCheapness    = "blended price per Mtok"
 )
 
 // Role tuning.
@@ -37,14 +37,11 @@ const (
 	roleTopN      = 3
 )
 
-// blendedPrice weights prompt over completion: agent traffic is
-// input-heavy. Prices are USD per Mtok.
-func blendedPrice(prompt, completion float64) float64 {
-	return 0.8*prompt + 0.2*completion
+// blendedCeiling is the blended price under w, without cache discount, at
+// both affordability ceilings.
+func blendedCeiling(w discounts.Workload) float64 {
+	return discounts.Rates{Prompt: discounts.MaxPrompt, Completion: discounts.MaxCompletion}.Blended(w)
 }
-
-// blendedCeiling is the blended price at both affordability ceilings.
-var blendedCeiling = blendedPrice(discounts.MaxPrompt, discounts.MaxCompletion)
 
 // candidate is one discounted, catalog-listed model eligible for roles.
 type candidate struct {
@@ -125,14 +122,23 @@ func hermesPool(models []discounts.Model, discs []discounts.Discount, intel map[
 }
 
 // scoreRole ranks one role's candidates and keeps the top 3.
-func scoreRole(sec Sector, cands []candidate, code map[string]float64, taken map[string]bool) SectorResult {
+// Each candidate is first re-picked for the role's Need; candidates without
+// a fitting discounted endpoint drop out.
+func scoreRole(sec Sector, pool []candidate, code map[string]float64, taken map[string]bool) SectorResult {
 	sr := SectorResult{Sector: sec, Source: SourceIntelligence}
+	cands := make([]candidate, 0, len(pool))
+	for _, c := range pool {
+		if p, ok := sec.pick(c.disc); ok {
+			c.disc = p
+			cands = append(cands, c)
+		}
+	}
 	raw := make(map[string]float64, len(cands))
 	switch sec {
 	case HermesLight:
 		sr.Source = SourceCheapness
 		for _, c := range cands {
-			raw[c.disc.ModelID] = 100 * (1 - blendedPrice(c.disc.Price, c.disc.Completion)/blendedCeiling)
+			raw[c.disc.ModelID] = 100 * (1 - c.disc.Price/blendedCeiling(sec.Need().Workload))
 		}
 	case HermesDelegate:
 		var scored []candidate
@@ -162,7 +168,8 @@ func scoreRole(sec Sector, cands []candidate, code map[string]float64, taken map
 	}
 	rows := make([]ranked, 0, len(cands))
 	for _, c := range cands {
-		row := Row{ModelID: c.disc.ModelID, Price: c.disc.Price, Was: c.disc.Was, Pct: c.disc.Pct, Score: raw[c.disc.ModelID], Scored: true}
+		row := rowOf(c.disc)
+		row.Score, row.Scored = raw[c.disc.ModelID], true
 		v := composite(row)
 		if taken[row.ModelID] {
 			v -= diversityPenalty
@@ -175,9 +182,11 @@ func scoreRole(sec Sector, cands []candidate, code map[string]float64, taken map
 		}
 		return byPct(a.Row, b.Row)
 	})
-	for i := range min(roleTopN, len(rows)) {
-		sr.Rows = append(sr.Rows, rows[i].Row)
+	ordered := make([]Row, len(rows))
+	for i, r := range rows {
+		ordered[i] = r.Row
 	}
+	sr.Rows = Pinnable(ordered, roleTopN)
 	return sr
 }
 

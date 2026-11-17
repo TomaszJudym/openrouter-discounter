@@ -23,6 +23,23 @@ func thursday(t *testing.T) time.Time {
 	return day
 }
 
+// at is the Thursday test day at hh:mm UTC.
+func at(t *testing.T, hh, mm int) time.Time {
+	t.Helper()
+	return thursday(t).Add(time.Duration(hh)*time.Hour + time.Duration(mm)*time.Minute)
+}
+
+// ep builds an endpoint with flat pricing and a provider discount.
+func ep(provider, prompt, completion string, discount float64) Endpoint {
+	return Endpoint{Provider: provider, Pricing: Pricing{Prompt: prompt, Completion: completion, Discount: discount}}
+}
+
+// flat is the blended DefaultWorkload price of uncached prompt/completion
+// rates, USD per Mtok.
+func flat(prompt, completion float64) float64 {
+	return Rates{Prompt: prompt, Completion: completion}.Blended(DefaultWorkload)
+}
+
 func mustParse(t *testing.T, raw string) []Model {
 	t.Helper()
 	var r response
@@ -45,20 +62,28 @@ func TestDetectWeekdayWindowDiscount(t *testing.T) {
 			"prompt":"0.0000020","completion":"0.0000100",
 			"overrides":[{"utc_days":["thursday"],"prompt":"0.0000020","completion":"0.0000100"}]}}
 	]}`)
-	got := Detect(data, thursday(t))
+	// Thursday 00:00 + 24h: 2h at 1.4, 22h at the 2.0 base
+	got := Detect(data, at(t, 0, 0))
 	if len(got) != 1 {
-		t.Fatalf("Detect() = %+v, want exactly one discount", got)
+		t.Fatalf("Detect(Thu) = %+v, want exactly one discount", got)
 	}
 	d := got[0]
-	if d.ModelID != "vendor/weekend-model" {
-		t.Errorf("ModelID = %q, want %q", d.ModelID, "vendor/weekend-model")
+	if d.ModelID != "vendor/weekend-model" || d.Window != "thursday 04:00–06:00 UTC" {
+		t.Errorf("row = %+v, want vendor/weekend-model in the Thursday 04:00 window", d)
 	}
-	// cheapest of the two Thursday windows wins: 1.4/Mtok vs base 2.0/Mtok
-	if d.Price != 1.4 || d.Was != 2.0 {
-		t.Errorf("Price/Was = %v/%v, want 1.4/2.0", d.Price, d.Was)
+	if want := (2*1.4 + 22*2.0) / 24; !floatEq(d.Prompt, want) || !floatEq(d.Price, flat(want, want*5)) || !floatEq(d.Was, flat(2, 10)) {
+		t.Errorf("Prompt/Price/Was = %v/%v/%v, want 24h average %v", d.Prompt, d.Price, d.Was, want)
 	}
-	if want := (1.4/2.0 - 1) * 100; !floatEq(d.Pct, want) {
-		t.Errorf("Pct = %v, want %v", d.Pct, want)
+	if !floatEq(d.Pct, -2.5) || !floatEq(d.PeakPrompt, 2) {
+		t.Errorf("Pct/PeakPrompt = %v/%v, want -2.5/2", d.Pct, d.PeakPrompt)
+	}
+	// a Friday run sees no window within 24h; Saturday is half price all day
+	if got := Detect(data, at(t, 24, 0)); len(got) != 0 {
+		t.Errorf("Detect(Fri) = %+v, want none", got)
+	}
+	got = Detect(data, at(t, 48, 0))
+	if len(got) != 1 || !floatEq(got[0].Pct, -50) || got[0].Window != "saturday,sunday" {
+		t.Errorf("Detect(Sat) = %+v, want -50%% in the saturday,sunday window", got)
 	}
 }
 
@@ -76,7 +101,7 @@ func TestDetectIgnoresVolumeTiersAndNullPricing(t *testing.T) {
 	}
 }
 
-func TestDetectCheapestWindowAcrossBuckets(t *testing.T) {
+func TestDetectAveragesWindowsOverHorizon(t *testing.T) {
 	data := mustParse(t, `{"data":[
 		{"id":"vendor/bucketed","name":"Bucketed","pricing":{
 			"prompt":"0.0000020","completion":"0.0000100",
@@ -84,9 +109,18 @@ func TestDetectCheapestWindowAcrossBuckets(t *testing.T) {
 				{"utc_days":["thursday"],"utc_start":0,"utc_end":400,"prompt":"0.0000018","completion":"0.0000090"},
 				{"utc_days":["thursday"],"utc_start":400,"utc_end":0,"prompt":"0.0000012","completion":"0.0000060"}]}}
 	]}`)
-	got := Detect(data, thursday(t))
-	if len(got) != 1 || got[0].Price != 1.2 {
-		t.Fatalf("Detect() = %+v, want price 1.2/Mtok (cheapest Thursday bucket)", got)
+	for _, tt := range []struct {
+		hh           int
+		prompt, peak float64
+	}{
+		{0, (4*1.8 + 20*1.2) / 24, 1.8},  // all of Thursday
+		{4, (20*1.2 + 4*2.0) / 24, 2.0},  // 20h of the cheap bucket, then Friday
+		{23, (1*1.2 + 23*2.0) / 24, 2.0}, // last Thursday hour, then Friday
+	} {
+		got := Detect(data, at(t, tt.hh, 0))
+		if len(got) != 1 || !floatEq(got[0].Prompt, tt.prompt) || !floatEq(got[0].PeakPrompt, tt.peak) {
+			t.Errorf("Detect(%02d:00) = %+v, want prompt %v, peak %v", tt.hh, got, tt.prompt, tt.peak)
+		}
 	}
 }
 
@@ -106,16 +140,16 @@ func TestDetectFreeTier(t *testing.T) {
 func TestEndpointDiscountMath(t *testing.T) {
 	byID := map[string][]Endpoint{
 		"a/model-a": {
-			{Provider: "Cheap", Prompt: "0.0000006426", Discount: 0.541},
-			{Provider: "Full", Prompt: "0.0000014", Discount: 0},
+			ep("Cheap", "0.0000006426", "", 0.541),
+			ep("Full", "0.0000014", "", 0),
 		},
 		"b/model-b": {
-			{Provider: "HalfOff", Prompt: "0.0000005", Discount: 0.5},
-			{Provider: "Small", Prompt: "0.0000008", Discount: 0.2},
+			ep("HalfOff", "0.0000005", "", 0.5),
+			ep("Small", "0.0000008", "", 0.2),
 		},
-		"c/model-c": {{Provider: "None", Prompt: "0.000001", Discount: 0}},
+		"c/model-c": {ep("None", "0.000001", "", 0)},
 	}
-	got := endpointDiscounts(byID)
+	got := endpointDiscounts(byID, thursday(t))
 	if len(got) != 2 {
 		t.Fatalf("endpointDiscounts() = %+v, want 2 discounts", got)
 	}
@@ -123,21 +157,24 @@ func TestEndpointDiscountMath(t *testing.T) {
 	if a.ModelID != "a/model-a" || a.Provider != "Cheap" {
 		t.Errorf("model-a row = %+v, want provider Cheap", a)
 	}
-	// 0.0000006426/Mtok = $0.6426; list = 0.6426/(1-0.541) = 1.4
-	if !floatEq(a.Price, 0.6426) || !floatEq(a.Was, 1.4) {
-		t.Errorf("Price/Was = %v/%v, want 0.6426/1.4", a.Price, a.Was)
+	// 0.0000006426/token = $0.6426/Mtok; list = 0.6426/(1-0.541) = 1.4
+	if !floatEq(a.Prompt, 0.6426) || !floatEq(a.Price, flat(0.6426, 0)) || !floatEq(a.Was, flat(1.4, 0)) {
+		t.Errorf("Prompt/Price/Was = %v/%v/%v, want 0.6426 prompt, list 1.4", a.Prompt, a.Price, a.Was)
 	}
 	if !floatEq(a.Pct, -54.1) {
 		t.Errorf("Pct = %v, want -54.1", a.Pct)
 	}
 	b := got[1]
 	// cheapest effective price among discounted endpoints: 0.5 < 0.8
-	if b.Provider != "HalfOff" || !floatEq(b.Price, 0.5) || !floatEq(b.Was, 1.0) {
+	if b.Provider != "HalfOff" || !floatEq(b.Prompt, 0.5) || !floatEq(b.Pct, -50) {
 		t.Errorf("model-b row = %+v, want HalfOff 0.5/1.0", b)
 	}
 }
 
-func TestFetchDiscountsMergesEndpointAndWindowRows(t *testing.T) {
+// stubEndpoints serves the endpoint fixtures of the merge test and records
+// every requested path.
+func stubEndpoints(t *testing.T) (*http.Client, func() []string) {
+	t.Helper()
 	var mu sync.Mutex
 	var seen []string
 	old := endpointsURLFormat
@@ -148,8 +185,9 @@ func TestFetchDiscountsMergesEndpointAndWindowRows(t *testing.T) {
 		switch {
 		case strings.HasPrefix(r.URL.Path, "/models/vendor/promo/"):
 			_, _ = fmt.Fprint(w, `{"data":{"id":"vendor/promo","endpoints":[{"provider_name":"Cheap","pricing":{"prompt":"0.0000005","completion":"0.000002","discount":0.5}},{"provider_name":"List","pricing":{"prompt":"0.000001","completion":"0.000004","discount":0}}]}}`)
-		case strings.HasPrefix(r.URL.Path, "/models/vendor/windowonly/"):
-			_, _ = fmt.Fprint(w, `{"data":{"id":"vendor/windowonly","endpoints":[{"provider_name":"List","pricing":{"prompt":"0.000002","completion":"0.000008","discount":0}}]}}`)
+		case strings.HasPrefix(r.URL.Path, "/models/vendor/beaten/"):
+			// window active, but the catalog's own windows yield to endpoint data
+			_, _ = fmt.Fprint(w, `{"data":{"id":"vendor/beaten","endpoints":[{"provider_name":"List","pricing":{"prompt":"0.000002","completion":"0.000008","discount":0}}]}}`)
 		case strings.HasPrefix(r.URL.Path, "/models/vendor/broken/"):
 			w.WriteHeader(http.StatusForbidden)
 			_, _ = fmt.Fprint(w, `{"error":"nope"}`)
@@ -158,23 +196,35 @@ func TestFetchDiscountsMergesEndpointAndWindowRows(t *testing.T) {
 		}
 	}))
 	t.Cleanup(func() { endpointsURLFormat = old })
-	_ = srv.Client() // starts the in-memory server and fills srv.URL
+	// srv.Client(): the in-memory transport routes the example.com host
+	hc := srv.Client() // starts the in-memory server and fills srv.URL
 	endpointsURLFormat = srv.URL + "/models/%s/%s/endpoints"
+	return hc, func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		return slices.Clone(seen)
+	}
+}
 
+func TestFetchDiscountsMergesEndpointAndWindowRows(t *testing.T) {
+	hc, seen := stubEndpoints(t)
 	data := mustParse(t, `{"data":[
 		{"id":"vendor/promo","name":"Promo","pricing":{"prompt":"0.000001","completion":"0.000004"}},
 		{"id":"vendor/windowonly","name":"Window","pricing":{"prompt":"0.000002","completion":"0.000008",
 			"overrides":[{"utc_days":["thursday"],"prompt":"0.0000012","completion":"0.0000050"}]}},
+		{"id":"vendor/beaten","name":"Beaten","pricing":{"prompt":"0.000002","completion":"0.000008",
+			"overrides":[{"utc_days":["thursday"],"prompt":"0.0000012","completion":"0.0000050"}]}},
+		{"id":"vendor/promo:batch","name":"Batch","pricing":{"prompt":"0.0000005","completion":"0.000002",
+			"overrides":[{"utc_days":["thursday"],"prompt":"0.0000001"}]}},
 		{"id":"vendor/broken","name":"Broken","pricing":{"prompt":"0.000002","completion":"0.000008"}},
 		{"id":"vendor/freem:free","name":"Free","pricing":{"prompt":"0","completion":"0"}}
 	]}`)
-	// srv.Client(): the in-memory transport routes the example.com host
-	discs, free, err := FetchDiscounts(t.Context(), srv.Client(), data, thursday(t))
+	discs, free, err := FetchDiscounts(t.Context(), hc, data, thursday(t))
 	if len(free) != 1 || free[0] != "vendor/freem:free" {
 		t.Errorf("free = %v, want [vendor/freem:free]", free)
 	}
 	if len(discs) != 2 {
-		t.Fatalf("discounts = %+v, want 2 (promo + windowonly)", discs)
+		t.Fatalf("discounts = %+v, want 2 (promo + windowonly; beaten has endpoint data)", discs)
 	}
 	if discs[0].ModelID != "vendor/promo" || discs[0].Provider != "Cheap" {
 		t.Errorf("first row = %+v, want vendor/promo via Cheap", discs[0])
@@ -185,9 +235,9 @@ func TestFetchDiscountsMergesEndpointAndWindowRows(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "vendor/broken") {
 		t.Errorf("err = %v, want failure for vendor/broken", err)
 	}
-	for _, p := range seen {
-		if strings.Contains(p, "freem:free") {
-			t.Errorf(":free model was fetched: %s", p)
+	for _, p := range seen() {
+		if strings.Contains(p, "freem:free") || strings.Contains(p, ":batch") {
+			t.Errorf(":free or :batch model was fetched: %s", p)
 		}
 	}
 }
@@ -256,7 +306,7 @@ func TestFetchEndpointsParsesPricing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("fetchEndpoints() error = %v, want nil", err)
 	}
-	if len(eps) != 2 || eps[0].Provider != "Inception" || eps[0].Discount != 0.8 || eps[0].Prompt != "0.00000004" {
+	if len(eps) != 2 || eps[0].Provider != "Inception" || eps[0].Pricing.Discount != 0.8 || eps[0].Pricing.Prompt != "0.00000004" {
 		t.Errorf("endpoints = %+v, want Inception with 0.8 discount first", eps)
 	}
 }
@@ -276,44 +326,19 @@ func (errTransport) RoundTrip(*http.Request) (*http.Response, error) {
 }
 
 func TestDayMatchingAcrossCase(t *testing.T) {
-	if got, _ := minTodayPrice([]Override{{Days: []string{"THURSDAY"}, Prompt: "0.0000010"}}, "thursday"); got != 0.000001 {
-		t.Errorf("minTodayPrice() = %v, want 0.000001", got)
+	if !(Override{Days: []string{"THURSDAY"}}).activeAt(thursday(t)) {
+		t.Error("activeAt(Thursday) = false for utc_days THURSDAY, want true")
 	}
 }
 
 func floatEq(a, b float64) bool { return math.Abs(a-b) < 1e-9 }
 
-func TestEndpointDiscountPrefersAffordableEndpoint(t *testing.T) {
-	byID := map[string][]Endpoint{
-		// cheapest prompt breaks the completion ceiling; the other fits both
-		"a/model": {
-			{Provider: "CheapIn", Prompt: "0.0000002", Completion: "0.000009", Discount: 0.5},
-			{Provider: "Fits", Prompt: "0.0000004", Completion: "0.0000008", Discount: 0.2},
-		},
-		// no endpoint fits: cheapest prompt still reported
-		"b/model": {
-			{Provider: "Pricey", Prompt: "0.000003", Completion: "0.000015", Discount: 0.5},
-			{Provider: "Priceier", Prompt: "0.000004", Completion: "0.000001", Discount: 0.5},
-		},
-	}
-	got := endpointDiscounts(byID)
-	if len(got) != 2 {
-		t.Fatalf("endpointDiscounts() = %+v, want 2 rows", got)
-	}
-	if got[0].Provider != "Fits" || !floatEq(got[0].Completion, 0.8) {
-		t.Errorf("model a row = %+v, want provider Fits, completion 0.8", got[0])
-	}
-	if got[1].Provider != "Pricey" {
-		t.Errorf("model b row = %+v, want provider Pricey", got[1])
-	}
-}
-
 func TestAffordableFiltersPriceCeilings(t *testing.T) {
 	ds := []Discount{
-		{ModelID: "ok", Price: 0.5, Completion: 1.0},
-		{ModelID: "input-over", Price: 0.51, Completion: 0.5},
-		{ModelID: "output-over", Price: 0.1, Completion: 1.01},
-		{ModelID: "unlisted-output", Price: 0.25},
+		{ModelID: "ok", Prompt: 0.5, Completion: 1.0},
+		{ModelID: "input-over", Prompt: 0.51, Completion: 0.5},
+		{ModelID: "output-over", Prompt: 0.1, Completion: 1.01},
+		{ModelID: "unlisted-output", Prompt: 0.25},
 	}
 	got := Affordable(ds)
 	ids := make([]string, 0, len(got))

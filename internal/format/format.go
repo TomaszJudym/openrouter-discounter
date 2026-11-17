@@ -12,6 +12,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/tomaszjudym/openrouter-discounter/internal/discounts"
 	"github.com/tomaszjudym/openrouter-discounter/internal/rank"
 )
 
@@ -19,7 +20,8 @@ import (
 const (
 	messageLimit = 4000
 	widthModel   = 24
-	widthPair    = 12 // "was→now", per Mtok, 2 decimals
+	widthProv    = 12
+	widthPair    = 13 // "was→now", blended per Mtok
 	widthPct     = 4
 	widthScore   = 5
 
@@ -29,13 +31,18 @@ const (
 
 var htmlEscaper = strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;")
 
+// priceNote explains the price columns: blended per Mtok under the default
+// workload, averaged over the day the picks stay pinned.
+var priceNote = "prices: 24h-avg blended $/Mtok, " + discounts.DefaultWorkload.String()
+
 // jst is Japan Standard Time; JST has no DST so a fixed zone is exact.
 var jst = time.FixedZone("JST", 9*3600)
 
 // Messages renders one HTML message for the ranking, or one per sector when
 // the combined message would exceed the per-message limit.
 func Messages(res rank.Result, now time.Time) []string {
-	header := "🪙 OpenRouter discounts — " + now.In(jst).Format(headerTimeLayout)
+	header := "🪙 OpenRouter discounts — " + now.In(jst).Format(headerTimeLayout) +
+		"\n" + priceNote
 	msgs := make([]string, 0, 4)
 	var b strings.Builder
 	b.WriteString(header)
@@ -109,7 +116,8 @@ func table(sr rank.SectorResult) string {
 	}
 	if withPrice {
 		hdr = append(hdr,
-			cell{text: "was→now", width: widthPair, right: true},
+			cell{text: "provider", width: widthProv},
+			cell{text: pad("was", (widthPair-1)/2, true) + "→" + pad("now", (widthPair-1)/2, false), width: widthPair},
 			cell{text: "Δ%", width: widthPct, right: true})
 	}
 	if withScore {
@@ -124,7 +132,8 @@ func table(sr rank.SectorResult) string {
 		}
 		if withPrice {
 			cells = append(cells,
-				cell{text: fmt.Sprintf("%.2f→%.2f", r.Was, r.Price), width: widthPair, right: true},
+				cell{text: htmlEscaper.Replace(truncateRunes(provider(r.Provider), widthProv)), width: widthProv},
+				cell{text: pricePair(r.Was, r.Price), width: widthPair, right: true},
 				cell{text: fmt.Sprintf("%.0f", r.Pct), width: widthPct, right: true})
 		}
 		if withScore {
@@ -138,6 +147,28 @@ func table(sr rank.SectorResult) string {
 		b.WriteByte('\n')
 	}
 	return b.String()
+}
+
+// provider names the endpoint to pin; catalog rows price every provider.
+func provider(p string) string {
+	if p == "" {
+		return "any"
+	}
+	return p
+}
+
+// pricePair renders "was→now" per Mtok: 3 decimals when the list price is
+// below $1, where blended cached prices live, else 2; the arrow sits at the
+// column's center.
+func pricePair(was, now float64) string {
+	prec := 2
+	if was < 1 {
+		prec = 3
+	}
+	// pad around the arrow so it stays aligned across precisions
+	half := (widthPair - 1) / 2
+	return pad(strconv.FormatFloat(was, 'f', prec, 64), half, true) + "→" +
+		pad(strconv.FormatFloat(now, 'f', prec, 64), half, false)
 }
 
 func truncateRunes(s string, width int) string {

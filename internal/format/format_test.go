@@ -18,7 +18,7 @@ func scoredResult() rank.Result {
 		Sectors: []rank.SectorResult{{
 			Sector: rank.Math,
 			Rows: []rank.Row{
-				{ModelID: "deepseek/deepseek-chat", Price: 0.14, Was: 0.28, Pct: -50, Score: 68.2, Scored: true},
+				{ModelID: "deepseek/deepseek-chat", Provider: "GMICloud", Price: 0.14, Was: 0.28, Pct: -50, Score: 68.2, Scored: true},
 				{ModelID: "qwen/qwen3-235b-a22b", Price: 0.09, Was: 0.18, Pct: -50},
 			},
 		}, {
@@ -47,8 +47,11 @@ func TestMessagesLayoutAndAlignment(t *testing.T) {
 		"MATH — top 10 discounted (Epoch OTIS Mock AIME)",
 		"FINANCE — top 10 discounted (AA Finance &amp; Accounting)",
 		"⚠️ scored only by price — Artificial Analysis error: 429 rate limit, retries exhausted",
-		"1  deepseek/deepseek-chat      0.28→0.14  -50  68.2",
-		"2  qwen/qwen3-235b-a22b        0.18→0.09  -50   n/a",
+		"prices: 24h-avg blended $/Mtok, 30k in (80% cached) + 1.5k out",
+		"#  model                    provider        was→now      Δ% score",
+		"1  deepseek/deepseek-chat   GMICloud      0.280→0.140   -50  68.2",
+		"2  qwen/qwen3-235b-a22b     any           0.180→0.090   -50   n/a",
+		"1  google/gemini-2.5-pro    any            1.30→0.65    -50",
 	} {
 		if !strings.Contains(m, want) {
 			t.Errorf("message missing %q:\n%s", want, m)

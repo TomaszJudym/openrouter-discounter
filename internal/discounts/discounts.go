@@ -1,18 +1,22 @@
 // Package discounts fetches the OpenRouter catalog and per-provider endpoint
 // pricing, and detects active price discounts.
 //
-// Discount definition (verified 2026-09 against the live API and the
-// /collections/discounted-models page, which is built from the same data):
-// a model is discounted iff at least one provider endpoint advertises
-// pricing.discount > 0 on GET /api/v1/models/{author}/{slug}/endpoints.
-// On such an endpoint pricing.prompt is already the discounted price; the
-// list price is prompt/(1-discount) — matching StreamLake's 0.0000006426 =
-// 0.0000014 × (1-0.541) against the standard $1.40/Mtok list. The reported
-// price is the cheapest effective prompt price among discounted endpoints.
+// Discount definition (verified 2026-11 against the live API): a model is
+// discounted iff one of its provider endpoints on
+// GET /api/v1/models/{author}/{slug}/endpoints is cheaper now than at its
+// list price — either pricing.discount > 0 (the listed prices are already
+// discounted; list = price/(1-discount)) or an active pricing.overrides time
+// window (utc_start/utc_end HHMM, optional utc_days) priced below the base.
 //
-// As a secondary signal, time-limited catalog windows on the model's own
-// pricing.overrides (utc_days weekday windows priced below the base) are
-// also reported; endpoint rows take precedence.
+// Prices compare as blended USD per Mtok under a request workload (see
+// Workload), averaged over the 24 hours the run's picks stay pinned (see
+// Horizon): cache-read, cache-write and reasoning rates count, not only the
+// prompt rate. Per model the pick is the single cheapest endpoint that
+// passes the flex and quantization filters (see usable) and meets the
+// preset's needs (see Discount.For); the model is a discount only when that
+// endpoint is discounted. Presets pin exactly that endpoint. Models without
+// endpoint data fall back to the catalog's own windows. :batch variants are
+// skipped: they serve asynchronous jobs, not chat.
 package discounts
 
 import (
@@ -22,6 +26,7 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"math"
 	"net/http"
 	"net/url"
 	"slices"
@@ -41,18 +46,11 @@ var endpointsURLFormat = "https://openrouter.ai/api/v1/models/%s/%s/endpoints"
 
 const (
 	freeSuffix   = ":free"
+	batchSuffix  = ":batch"
 	maxBodyBytes = 16 << 20
 	maxAttempts  = 3
 	workers      = 8
 )
-
-// Pricing is a model's base pricing. Prompt and Completion are decimal USD
-// per token.
-type Pricing struct {
-	Prompt     string     `json:"prompt"`
-	Completion string     `json:"completion"`
-	Overrides  []Override `json:"overrides"`
-}
 
 // Benchmarks holds the catalog's third-party benchmark scores.
 type Benchmarks struct {
@@ -127,14 +125,6 @@ func (m Model) WebSearch() bool {
 	return m.ToolCalling() || slices.Contains(m.SupportedParameters, "web_search_options")
 }
 
-// Override is one tiered-pricing entry; only entries with a utc_days window
-// are time-limited discounts — volume and context tiers carry none.
-type Override struct {
-	Days       []string `json:"utc_days"` // UTC weekdays the tier applies
-	Prompt     string   `json:"prompt"`
-	Completion string   `json:"completion"`
-}
-
 // Model is one catalog entry.
 type Model struct {
 	ID                  string       `json:"id"`
@@ -151,38 +141,87 @@ type response struct {
 	Data []Model `json:"data"`
 }
 
-// Endpoint is one provider's pricing for a model.
+// Endpoint is one provider's offer for a model. Tag is the endpoint slug
+// ("gmicloud/fp8") that provider.only accepts; unique per model.
+// ServiceTier is "flex", "priority", … for tier endpoints, empty otherwise.
 type Endpoint struct {
-	Provider   string
-	Prompt     string
-	Completion string
-	Discount   float64 // fraction; 0 = none
+	Provider        string   `json:"provider_name"`
+	Tag             string   `json:"tag"`
+	ServiceTier     string   `json:"service_tier"`
+	Pricing         Pricing  `json:"pricing"`
+	Quantization    string   `json:"quantization"`
+	ContextLength   int      `json:"context_length"`
+	Parameters      []string `json:"supported_parameters"`
+	ImplicitCaching bool     `json:"supports_implicit_caching"`
+	ToolChoice      struct {
+		Auto *bool `json:"auto"`
+	} `json:"supports_tool_choice"`
+}
+
+// tools reports whether the endpoint accepts tool definitions: tools is a
+// supported parameter and tool_choice auto (the default) is not refused.
+func (e Endpoint) tools() bool {
+	return slices.Contains(e.Parameters, "tools") && (e.ToolChoice.Auto == nil || *e.ToolChoice.Auto)
 }
 
 type endpointsResponse struct {
 	Data struct {
-		ID        string `json:"id"`
-		Endpoints []struct {
-			ProviderName string `json:"provider_name"`
-			Pricing      struct {
-				Prompt     string  `json:"prompt"`
-				Completion string  `json:"completion"`
-				Discount   float64 `json:"discount"`
-			} `json:"pricing"`
-		} `json:"endpoints"`
+		ID        string     `json:"id"`
+		Endpoints []Endpoint `json:"endpoints"`
 	} `json:"data"`
 }
 
-// Discount is one active price drop. Price and Was are USD per million
-// prompt tokens, Completion is the discounted USD per million output tokens
-// (0 when unlisted); Pct is negative for a discount.
+// Discount is a model whose cheapest fitting endpoint is discounted. The
+// pick fields describe one offer under one workload — from FetchDiscounts,
+// the cheapest offer for Require{} under DefaultWorkload; For re-picks for
+// a preset. Price and Was are blended USD per Mtok and Pct their change
+// (negative for a discount); Prompt and Completion are the average rates
+// and PeakPrompt/PeakCompletion the highest within the Horizon, USD per
+// Mtok, at the workload's context tier.
 type Discount struct {
-	ModelID    string
-	Provider   string // discounted provider, empty for catalog-window rows
-	Price      float64
-	Was        float64
-	Pct        float64
-	Completion float64
+	ModelID        string
+	Serves         []string // every endpoint tag of the model, for pin conflicts
+	Offers         []Offer  // every usable endpoint, discounted or not
+	Provider       string   // picked endpoint's provider; empty for catalog rows
+	Endpoint       string   // picked endpoint tag to pin; empty for catalog rows
+	Window         string   // price windows within the Horizon; empty for flat discounts
+	Price          float64
+	Was            float64
+	Pct            float64
+	Prompt         float64
+	Completion     float64
+	PeakPrompt     float64
+	PeakCompletion float64
+}
+
+// For re-picks the cheapest offer meeting r under w (a discounted offer
+// wins a tie); ok is false when no offer meets r or the cheapest is not
+// discounted. A row without offers (built by hand) is returned as is.
+func (d Discount) For(r Require, w Workload) (Discount, bool) {
+	if len(d.Offers) == 0 {
+		return d, true
+	}
+	best, bestPrice := -1, math.Inf(1)
+	for i, o := range d.Offers {
+		if !o.meets(r, w) {
+			continue
+		}
+		p := o.Avg.Blended(w)
+		if p < bestPrice || (p == bestPrice && o.discounted(w) && !d.Offers[best].discounted(w)) {
+			best, bestPrice = i, p
+		}
+	}
+	if best < 0 || !d.Offers[best].discounted(w) {
+		return Discount{}, false
+	}
+	o := d.Offers[best]
+	now, was := o.Avg.Blended(w), o.List.Blended(w)
+	avg, peak := o.Avg.For(w), o.Peak.For(w)
+	d.Provider, d.Endpoint, d.Window = o.Provider, o.Endpoint, o.Window
+	d.Price, d.Was, d.Pct = now, was, (now/was-1)*100
+	d.Prompt, d.Completion = avg.Prompt, avg.Completion
+	d.PeakPrompt, d.PeakCompletion = peak.Prompt, peak.Completion
+	return d, true
 }
 
 // Price ceilings for model selection, USD per million tokens of the
@@ -194,7 +233,7 @@ const (
 
 // Affordable reports whether the discounted price is within both ceilings.
 func (d Discount) Affordable() bool {
-	return d.Price <= MaxPrompt && d.Completion <= MaxCompletion
+	return d.Prompt <= MaxPrompt && d.Completion <= MaxCompletion
 }
 
 // Affordable returns the rows within the price ceilings, order kept.
@@ -240,7 +279,7 @@ func Fetch(ctx context.Context, hc *http.Client) ([]Model, error) {
 func FetchDiscounts(ctx context.Context, hc *http.Client, models []Model, now time.Time) ([]Discount, []string, error) {
 	targets := make([]string, 0, len(models))
 	for _, m := range models {
-		if strings.HasSuffix(m.ID, freeSuffix) {
+		if strings.HasSuffix(m.ID, freeSuffix) || strings.HasSuffix(m.ID, batchSuffix) {
 			continue
 		}
 		targets = append(targets, m.ID)
@@ -272,13 +311,11 @@ func FetchDiscounts(ctx context.Context, hc *http.Client, models []Model, now ti
 			byID[targets[i]] = eps
 		}
 	}
-	discounts := endpointDiscounts(byID)
-	hasRow := make(map[string]struct{}, len(discounts))
-	for _, d := range discounts {
-		hasRow[d.ModelID] = struct{}{}
-	}
+	discounts := endpointDiscounts(byID, now)
+	// catalog windows only for models without endpoint data: with it, the
+	// endpoint scan already saw the windows and the cheaper alternatives
 	for _, d := range Detect(models, now) {
-		if _, ok := hasRow[d.ModelID]; !ok {
+		if _, ok := byID[d.ModelID]; !ok {
 			discounts = append(discounts, d)
 		}
 	}
@@ -321,16 +358,7 @@ func fetchEndpoints(ctx context.Context, hc *http.Client, id string) ([]Endpoint
 			if err := json.Unmarshal(body, &r); err != nil {
 				return nil, fmt.Errorf("parse endpoints: %w", err)
 			}
-			eps := make([]Endpoint, 0, len(r.Data.Endpoints))
-			for _, e := range r.Data.Endpoints {
-				eps = append(eps, Endpoint{
-					Provider:   e.ProviderName,
-					Prompt:     e.Pricing.Prompt,
-					Completion: e.Pricing.Completion,
-					Discount:   e.Pricing.Discount,
-				})
-			}
-			return eps, nil
+			return r.Data.Endpoints, nil
 		case isTransient(resp.StatusCode):
 			lastErr = fmt.Errorf("GET %s: status %d: %.200s", target, resp.StatusCode, body)
 		default:
@@ -344,103 +372,58 @@ func isTransient(status int) bool {
 	return status == http.StatusTooManyRequests || status >= 500
 }
 
-// endpointDiscounts picks, per model, the cheapest discounted endpoint: on a
-// discounted endpoint the listed prompt price is already the discounted
-// price and the list price is prompt/(1-discount). Endpoints within the
-// price ceilings win over cheaper-prompt endpoints that break the
-// completion ceiling.
-func endpointDiscounts(byID map[string][]Endpoint) []Discount {
+// endpointDiscounts prices every usable endpoint of each model over the
+// Horizon from at and reports the model when its cheapest offer (Require{},
+// DefaultWorkload) is discounted. A discount undercut by an undiscounted
+// endpoint is no saving and yields no row.
+func endpointDiscounts(byID map[string][]Endpoint, at time.Time) []Discount {
 	out := make([]Discount, 0, len(byID))
 	for _, id := range slices.Sorted(maps.Keys(byID)) {
-		var best Discount
-		found := false
-		for _, e := range byID[id] {
-			if e.Discount <= 0 || e.Discount >= 1 {
-				continue
-			}
-			p, err := strconv.ParseFloat(e.Prompt, 64)
-			if err != nil || p <= 0 {
-				continue
-			}
-			d := Discount{
-				ModelID:    id,
-				Provider:   e.Provider,
-				Price:      p * 1e6,
-				Was:        p / (1 - e.Discount) * 1e6,
-				Pct:        -e.Discount * 100,
-				Completion: perMtok(e.Completion),
-			}
-			if !found || better(d, best) {
-				best, found = d, true
+		eps := byID[id]
+		d := Discount{ModelID: id, Serves: make([]string, 0, len(eps))}
+		for _, e := range eps {
+			if e.Tag != "" {
+				d.Serves = append(d.Serves, e.Tag)
 			}
 		}
-		if found {
-			out = append(out, best)
+		for _, e := range usable(eps) {
+			if o, ok := newOffer(e.Provider, e.Tag, e.Pricing, e.ImplicitCaching, at); ok {
+				o.Tools, o.Context = e.tools(), e.ContextLength
+				d.Offers = append(d.Offers, o)
+			}
+		}
+		if len(d.Offers) == 0 {
+			continue
+		}
+		if pick, ok := d.For(Require{}, DefaultWorkload); ok {
+			out = append(out, pick)
 		}
 	}
 	return out
 }
 
-// Detect returns models discounted under a currently active catalog-window
-// override (an override whose utc_days contains the current UTC weekday and
-// whose prompt price undercuts the base), plus the :free model ids. Base
-// prices of zero (including null pricing) are excluded.
-func Detect(models []Model, now time.Time) []Discount {
-	day := strings.ToLower(now.UTC().Weekday().String())
-	var discounts []Discount
+// Detect returns the models discounted by time windows in their catalog
+// pricing.overrides over the Horizon from at (priced below the base under
+// DefaultWorkload). Catalog offers carry the model's own tool and context
+// support and no implicit caching. Zero, null and dynamic (negative)
+// prices and :batch variants are excluded.
+func Detect(models []Model, at time.Time) []Discount {
+	var out []Discount
 	for _, m := range models {
-		if m.Pricing == nil {
+		if m.Pricing == nil || strings.HasSuffix(m.ID, batchSuffix) {
 			continue
 		}
-		base, err := strconv.ParseFloat(m.Pricing.Prompt, 64)
-		if err != nil || base <= 0 {
+		o, ok := newOffer("", "", *m.Pricing, false, at)
+		if !ok {
 			continue
 		}
-		best, completion := minTodayPrice(m.Pricing.Overrides, day)
-		if best >= base || best <= 0 {
-			continue
-		}
-		if completion == "" {
-			completion = m.Pricing.Completion
-		}
-		discounts = append(discounts, Discount{
-			ModelID:    m.ID,
-			Price:      best * 1e6,
-			Was:        base * 1e6,
-			Pct:        (best/base - 1) * 100,
-			Completion: perMtok(completion),
-		})
-	}
-	return discounts
-}
-
-// minTodayPrice is the cheapest prompt price among overrides whose utc_days
-// window contains day, with that override's completion price.
-func minTodayPrice(ovs []Override, day string) (float64, string) {
-	best := 0.0
-	completion := ""
-	for _, ov := range ovs {
-		if len(ov.Days) == 0 || !slices.ContainsFunc(ov.Days, func(d string) bool { return strings.EqualFold(d, day) }) {
-			continue
-		}
-		p, err := strconv.ParseFloat(ov.Prompt, 64)
-		if err != nil || p <= 0 {
-			continue
-		}
-		if best == 0 || p < best {
-			best, completion = p, ov.Completion
+		o.Tools, o.Context = m.ToolCalling(), m.ContextLength
+		d := Discount{ModelID: m.ID, Offers: []Offer{o}}
+		if pick, ok := d.For(Require{}, DefaultWorkload); ok {
+			out = append(out, pick)
 		}
 	}
-	return best, completion
-}
-
-// better orders candidate endpoint rows: affordable first, then cheaper
-// prompt.
-func better(a, b Discount) bool {
-	if a.Affordable() != b.Affordable() {
-		return a.Affordable()
-	}
-	return a.Price < b.Price
+	return out
 }
 
 // perMtok converts a decimal USD-per-token string to USD per million

@@ -288,7 +288,7 @@ func TestSelectExpensiveLongOrder(t *testing.T) {
 		{ModelID: "a/weak", Pct: -50}, {ModelID: "b/strong", Pct: -10}, {ModelID: "c/mid", Pct: -10},
 		{ModelID: "d/free:free", Pct: -90}, {ModelID: "e/weakest", Pct: -80}, {ModelID: "f/nothink", Pct: -70},
 	}
-	got := SelectExpensiveLong(models, discs)
+	got := SelectExpensiveLong(models, pin(discs))
 	if ids := idsOf(got.Rows); !slices.Equal(ids, []string{"a/weak", "b/strong", "c/mid"}) {
 		t.Errorf("order = %v, want 3 strongest discounted thinking, deepest discount first [a, b, c]", ids)
 	}
@@ -373,7 +373,7 @@ func TestSelectStrongestDiscountRequiresTools(t *testing.T) {
 	}
 	discs := []discounts.Discount{{ModelID: "a/notools"}, {ModelID: "b/tools"}, {ModelID: "c/nil"}}
 	thinking := map[string]float64{"a/notools": 90, "b/tools": 10, "c/nil": 80}
-	got := SelectStrongestDiscount(models, discs, thinking)
+	got := SelectStrongestDiscount(models, pin(discs), thinking)
 	if len(got.Rows) != 1 || got.Rows[0].ModelID != "b/tools" {
 		t.Errorf("Rows = %+v, want only b/tools", got.Rows)
 	}
@@ -399,7 +399,7 @@ func TestSelectStrongestDiscountFiltersAndOrders(t *testing.T) {
 		"b/image-only": 80.0,
 		"e/unknown":    70.0,
 	}
-	got := SelectStrongestDiscount(models, discs, thinking)
+	got := SelectStrongestDiscount(models, pin(discs), thinking)
 	if got.Sector != StrongestDiscountHalflight {
 		t.Errorf("Sector = %s, want %s", got.Sector, StrongestDiscountHalflight)
 	}
@@ -425,7 +425,7 @@ func TestSelectStrongestDiscountCapsAtThree(t *testing.T) {
 		{ModelID: "a/m1"}, {ModelID: "b/m2"}, {ModelID: "c/m3"}, {ModelID: "d/m4"},
 	}
 	thinking := map[string]float64{"a/m1": 10, "b/m2": 20, "c/m3": 30, "d/m4": 40}
-	got := SelectStrongestDiscount(models, discs, thinking)
+	got := SelectStrongestDiscount(models, pin(discs), thinking)
 	if len(got.Rows) != 3 {
 		t.Errorf("Rows = %d, want 3", len(got.Rows))
 	}
@@ -440,7 +440,7 @@ func TestSelectStrongestDiscountCapsAtThree(t *testing.T) {
 func TestSelectStrongestDiscountEmptyThinking(t *testing.T) {
 	models := []discounts.Model{{ID: "a/m", Architecture: discounts.Architecture{}}}
 	discs := []discounts.Discount{{ModelID: "a/m"}}
-	got := SelectStrongestDiscount(models, discs, nil)
+	got := SelectStrongestDiscount(models, pin(discs), nil)
 	if got.Rows != nil {
 		t.Errorf("Rows = %v, want nil (no thinking scores)", got.Rows)
 	}
@@ -450,7 +450,7 @@ func TestSelectStrongestDiscountModelMissing(t *testing.T) {
 	models := []discounts.Model{{ID: "other/model"}}
 	discs := []discounts.Discount{{ModelID: "a/missing"}}
 	thinking := map[string]float64{"a/missing": 90}
-	got := SelectStrongestDiscount(models, discs, thinking)
+	got := SelectStrongestDiscount(models, pin(discs), thinking)
 	if got.Rows != nil {
 		t.Errorf("Rows = %v, want nil (model not in catalog)", got.Rows)
 	}
@@ -593,3 +593,57 @@ func TestScoreModelsSinglePrice(t *testing.T) {
 		t.Errorf("ScoreModels same price = %v, want [b a]", got)
 	}
 }
+
+// pin gives each discount its own endpoint tag, as endpoint rows carry.
+func pin(ds []discounts.Discount) []discounts.Discount {
+	out := slices.Clone(ds)
+	for i := range out {
+		if out[i].Endpoint == "" {
+			out[i].Endpoint = out[i].ModelID + "@ep"
+			out[i].Serves = []string{out[i].Endpoint}
+		}
+	}
+	return out
+}
+
+func TestPinnableSkipsCrossServingEndpoints(t *testing.T) {
+	rows := []Row{
+		{ModelID: "a/m", Endpoint: "gmi/fp8", Serves: []string{"gmi/fp8", "deepinfra/fp8"}},
+		// b's pick deepinfra also serves a: a could route to it
+		{ModelID: "b/m", Endpoint: "deepinfra/fp8", Serves: []string{"deepinfra/fp8"}},
+		// c is served by gmi too: c could route to a's pick
+		{ModelID: "c/m", Endpoint: "novita/fp8", Serves: []string{"novita/fp8", "gmi/fp8"}},
+		{ModelID: "d/catalog"}, // no endpoint to pin
+		// e shares a's endpoint: both stay pinned to it
+		{ModelID: "e/m", Endpoint: "gmi/fp8", Serves: []string{"gmi/fp8"}},
+		{ModelID: "f/m", Endpoint: "google/vertex", Serves: []string{"google/vertex"}},
+		{ModelID: "g/m", Endpoint: "x/y", Serves: []string{"x/y"}},
+	}
+	if got, want := idsOf(Pinnable(rows, 3)), []string{"a/m", "e/m", "f/m"}; !slices.Equal(got, want) {
+		t.Errorf("Pinnable() = %v, want %v", got, want)
+	}
+}
+
+func TestSelectStrongestDiscountRepicksToolEndpoint(t *testing.T) {
+	// the report's cheapest endpoint lacks tools; the persona preset pins
+	// the dearer tool-capable one, priced under the persona workload
+	tariff := func(p, c float64) discounts.Tariff {
+		return discounts.Tariff{Base: discounts.Rates{Prompt: p, Completion: c}}
+	}
+	d := discounts.Discount{ModelID: "a/m", Serves: []string{"cheap/fp8", "tools/fp8"}, Offers: []discounts.Offer{
+		{Provider: "Cheap", Endpoint: "cheap/fp8", Avg: tariff(0.1, 0.4), Peak: tariff(0.1, 0.4), List: tariff(0.2, 0.8)},
+		{Provider: "Tools", Endpoint: "tools/fp8", Avg: tariff(0.2, 0.8), Peak: tariff(0.2, 0.8), List: tariff(0.4, 1.6), Tools: true},
+	}}
+	d, _ = d.For(discounts.Require{}, discounts.DefaultWorkload)
+	models := []discounts.Model{{ID: "a/m", SupportedParameters: tools}}
+	got := SelectStrongestDiscount(models, []discounts.Discount{d}, map[string]float64{"a/m": 50})
+	if len(got.Rows) != 1 || got.Rows[0].Endpoint != "tools/fp8" || got.Rows[0].PeakPrompt != 0.2 {
+		t.Fatalf("rows = %+v, want a/m pinned at tools/fp8, peak prompt 0.2", got.Rows)
+	}
+	want := discounts.Rates{Prompt: 0.2, Completion: 0.8}.Blended(StrongestDiscountHalflight.Need().Workload)
+	if !floatEqual(got.Rows[0].Price, want) {
+		t.Errorf("price = %v, want %v under the persona workload", got.Rows[0].Price, want)
+	}
+}
+
+func floatEqual(a, b float64) bool { return a-b < 1e-9 && b-a < 1e-9 }

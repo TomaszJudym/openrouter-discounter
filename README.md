@@ -56,8 +56,28 @@ Ranking:
 final = 0.75 × score + 0.25 × (−Δ%)
 ```
 
-Score weighs 75%, discount 25%. Prices are USD per Mtok prompt; Δ% is
-the discount vs the provider's list price. Top 10 per category are sent.
+Score weighs 75%, discount 25%. Top 10 per category are sent.
+
+Prices are blended USD per Mtok for one agent request — 30k input tokens,
+80% served from the prompt cache, 1.5k output (half reasoning) — averaged
+over the 24 hours the run's picks stay pinned. Cache reads bill at
+`input_cache_read` only on endpoints with implicit caching (no
+`cache_control` breakpoints are assumed; flip `discounts.ExplicitCaching`
+if your client sends them), misses at `max(prompt, input_cache_write)`,
+reasoning at `internal_reasoning` when listed. Δ% is the change vs the
+provider's list price. A provider's `discount` and `pricing.overrides` time
+windows (`utc_start`/`utc_end`, HHMM UTC, may wrap midnight; optional
+`utc_days`) both count: a window covering 10 of the next 24 hours at half
+price shows as −21%. The run logs every window discount with its hours.
+
+Each model is priced at its single cheapest endpoint by that blended
+price, and the `provider` column names it. A model counts as discounted only
+when that endpoint is discounted: a discount undercut by an undiscounted
+provider is no saving. Flex service-tier endpoints (`…/flex`: cheaper, but
+queued or rejected under load) are never used. Endpoints at ≤4-bit
+quantization are skipped when another provider serves the model at higher
+precision; uptime is not filtered. `:batch` variants (asynchronous jobs) are
+not reported.
 Unscored models rank last, by discount. A model keeps its best score across
 reasoning-effort variants; a `:free` id shares its base model's benchmark
 score, other variants (`:batch`) stay unscored.
@@ -77,6 +97,35 @@ report shows, under its header:
 The error text has the AA key removed and is truncated to 120 chars.
 
 ## Preset updates
+
+Paid presets pin each model to its cheapest endpoint: `provider.only` lists
+the endpoint tags (`gmicloud/fp8`) with `allow_fallbacks: false`, so a failed
+request falls through to the next of the 3 models, never to another
+provider. `provider.only` applies to the whole request, so a model is passed
+over for the next-ranked one when one of its endpoints is another picked
+model's pin (it could route there). `provider.max_price` caps prompt and
+completion at the highest rate any pinned endpoint bills within the 24
+hours (+1%), so a discount ending early sends requests to the next model
+instead of billing list price; the cap is shared, so it only protects
+models pinned below the most expensive one. Free presets route unpinned.
+
+Each preset re-picks every model's endpoint for its own needs: the
+cheapest endpoint that supports what the preset sends, priced under the
+preset's request shape. Tool support (`tools` listed and `tool_choice: auto`
+not refused) and context length are checked per endpoint, not per model.
+
+| preset | endpoint must | request shape (in / cached / out / reasoning) |
+|---|---|---|
+| admech-* (report tables) | — | 30k / 80% / 1.5k / 50% |
+| expensive-long | fit 304k tokens | 300k / 80% / 4k / 50% |
+| strongest-discount-* | call tools | 8k / 70% / 3k / 60% |
+| hermes-delegate | call tools | 40k / 85% / 2k / 50% |
+| hermes-review | call tools | 60k / 50% / 1.5k / 50% |
+| hermes-compress | hold 1M tokens | 200k / 10% / 4k / 10% |
+| hermes-vision | — | 5k / 0% / 0.5k / 0% |
+| hermes-light | — | 2k / 0% / 0.2k / 0% |
+
+Shapes live in `internal/rank/needs.go`; tune them to observed usage.
 
 With `OPENROUTER_MANAGEMENT_KEY` set, each run also repoints the OpenRouter presets
 `admech-math`, `admech-long`, `admech-finance`, `admech-code`, and
@@ -136,12 +185,13 @@ fallback order.
 | `hermes-vision` | `auxiliary.vision` | image input | II | none |
 | `hermes-compress` | `auxiliary.compression` | ctx ≥ 1M | II | low |
 | `hermes-review` | `auxiliary.background_review`, `curator` | tools | II | medium |
-| `hermes-light` | `auxiliary.title_generation`, `session_search`, `approval`, `goal_judge` | II ≥ 20 | cheapness `100·(1 − blended/0.6)` | none |
+| `hermes-light` | `auxiliary.title_generation`, `session_search`, `approval`, `goal_judge` | II ≥ 20 | cheapness `100·(1 − blended/ceiling)` | none |
 
 Pool: affordable discounted rows (≤ $0.5 prompt / $1 completion per Mtok),
 no `:free`/`:batch`, positive catalog II. Quality is min–max scaled within
-each role (except cheapness, scaled to the ceiling); blended price is
-0.8 × prompt + 0.2 × completion. Rank = 0.75 × quality + 0.25 × (−Δ%).
+each role (except cheapness, scaled to the ceiling: the blended price of
+$0.5/$1 uncached under the role's request shape); prices are the role's
+re-pick (see the table above). Rank = 0.75 × quality + 0.25 × (−Δ%).
 Roles pick in table order; a model already #1 in an earlier role loses 15
 points, so it repeats only when clearly best. Hermes' own per-request
 `reasoning_effort` overrides the preset effort.

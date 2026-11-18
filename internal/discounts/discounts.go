@@ -56,6 +56,7 @@ const (
 type Benchmarks struct {
 	ArtificialAnalysis struct {
 		IntelligenceIndex float64 `json:"intelligence_index"`
+		CodingIndex       float64 `json:"coding_index"`
 	} `json:"artificial_analysis"`
 }
 

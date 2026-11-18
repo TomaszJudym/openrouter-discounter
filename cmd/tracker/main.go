@@ -122,7 +122,13 @@ func rankSectors(ctx context.Context, hc *http.Client, models []discounts.Model,
 	defer cancel()
 	g := fetch.Getter{HC: hc}
 	prov := rank.Providers{
-		epoch.New(g, ids),
+		// models WebDev Arena does not rate fall back to the catalog's
+		// coding index, calibrated onto the Epoch scale
+		rank.Backfill{
+			Provider: epoch.New(g, ids),
+			Sectors:  []rank.Sector{rank.Code, rank.CodeFree},
+			Fallback: codingIndex(models),
+		},
 		aa.New(g, os.Getenv("AA_API_KEY"), ids),
 		popularity.New(g, models, rank.LCR),
 	}
@@ -153,14 +159,25 @@ func provider(p string) string {
 }
 
 // intelligence maps catalog ids to the AA Intelligence Index that the
-// OpenRouter catalog carries (benchmarks.artificial_analysis). A ":free" id
-// without its own value inherits the base model's; other variants
-// (":thinking", ":exacto", …) do not, so they cannot duplicate the base
-// model in the strongest-discount top 3.
+// OpenRouter catalog carries (benchmarks.artificial_analysis).
 func intelligence(models []discounts.Model) map[string]float64 {
+	return catalogScores(models, func(m discounts.Model) float64 { return m.Benchmarks.ArtificialAnalysis.IntelligenceIndex })
+}
+
+// codingIndex maps catalog ids to the catalog's AA Coding Index, the
+// fallback for models WebDev Arena does not rate.
+func codingIndex(models []discounts.Model) map[string]float64 {
+	return catalogScores(models, func(m discounts.Model) float64 { return m.Benchmarks.ArtificialAnalysis.CodingIndex })
+}
+
+// catalogScores maps catalog ids to a positive catalog benchmark value. A
+// ":free" id without its own value inherits the base model's; other
+// variants (":thinking", ":exacto", …) do not, so they cannot duplicate the
+// base model in a top 3.
+func catalogScores(models []discounts.Model, value func(discounts.Model) float64) map[string]float64 {
 	out := make(map[string]float64, len(models))
 	for _, m := range models {
-		if v := m.Benchmarks.ArtificialAnalysis.IntelligenceIndex; v > 0 {
+		if v := value(m); v > 0 {
 			out[m.ID] = v
 		}
 	}

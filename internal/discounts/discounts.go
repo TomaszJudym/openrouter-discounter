@@ -113,6 +113,12 @@ func (m Model) Thinking() bool {
 	return slices.Contains(m.SupportedParameters, "reasoning")
 }
 
+// MandatoryReasoning reports whether the model always reasons: the catalog
+// marks reasoning mandatory, so it cannot be turned off per request.
+func (m Model) MandatoryReasoning() bool {
+	return m.Reasoning != nil && m.Reasoning.Mandatory
+}
+
 // ToolCalling reports whether the model accepts function/tool definitions:
 // the catalog lists "tools" in supported_parameters.
 func (m Model) ToolCalling() bool {
@@ -199,6 +205,20 @@ type Discount struct {
 // wins a tie); ok is false when no offer meets r or the cheapest is not
 // discounted. A row without offers (built by hand) is returned as is.
 func (d Discount) For(r Require, w Workload) (Discount, bool) {
+	return d.pick(r, w, true)
+}
+
+// ForAny is For without the discount requirement: the cheapest offer
+// meeting r under w, discounted or not (Pct 0 when not). Roles that rank
+// by absolute price use it, so a cheap list-price model can beat a pricier
+// discounted one.
+func (d Discount) ForAny(r Require, w Workload) (Discount, bool) {
+	return d.pick(r, w, false)
+}
+
+// pick is For and ForAny; discounted requires the cheapest offer to be a
+// discount.
+func (d Discount) pick(r Require, w Workload, discounted bool) (Discount, bool) {
 	if len(d.Offers) == 0 {
 		return d, true
 	}
@@ -212,7 +232,7 @@ func (d Discount) For(r Require, w Workload) (Discount, bool) {
 			best, bestPrice = i, p
 		}
 	}
-	if best < 0 || !d.Offers[best].discounted(w) {
+	if best < 0 || (discounted && !d.Offers[best].discounted(w)) {
 		return Discount{}, false
 	}
 	o := d.Offers[best]
@@ -274,10 +294,11 @@ func Fetch(ctx context.Context, hc *http.Client) ([]Model, error) {
 }
 
 // FetchDiscounts scans every non-free model's provider endpoints for
-// discounts and merges in catalog-window discounts. Models whose endpoint
-// fetch fails are skipped and the failure is returned joined, without
-// aborting the scan.
-func FetchDiscounts(ctx context.Context, hc *http.Client, models []Model, now time.Time) ([]Discount, []string, error) {
+// discounts and merges in catalog-window discounts. priced holds every
+// scanned model with a usable offer, discounted or not (see Priced), for
+// roles that rank by absolute price. Models whose endpoint fetch fails are
+// skipped and the failure is returned joined, without aborting the scan.
+func FetchDiscounts(ctx context.Context, hc *http.Client, models []Model, now time.Time) (discs, priced []Discount, free []string, err error) {
 	targets := make([]string, 0, len(models))
 	for _, m := range models {
 		if strings.HasSuffix(m.ID, freeSuffix) || strings.HasSuffix(m.ID, batchSuffix) {
@@ -312,15 +333,15 @@ func FetchDiscounts(ctx context.Context, hc *http.Client, models []Model, now ti
 			byID[targets[i]] = eps
 		}
 	}
-	discounts := endpointDiscounts(byID, now)
+	discs = endpointDiscounts(byID, now)
 	// catalog windows only for models without endpoint data: with it, the
 	// endpoint scan already saw the windows and the cheaper alternatives
 	for _, d := range Detect(models, now) {
 		if _, ok := byID[d.ModelID]; !ok {
-			discounts = append(discounts, d)
+			discs = append(discs, d)
 		}
 	}
-	return discounts, freeModels(models), errors.Join(failures...)
+	return discs, Priced(byID, now), freeModels(models), errors.Join(failures...)
 }
 
 // fetchEndpoints retrieves one model's provider endpoint pricing with
@@ -373,6 +394,42 @@ func isTransient(status int) bool {
 	return status == http.StatusTooManyRequests || status >= 500
 }
 
+// Priced prices every usable endpoint of each model over the Horizon from
+// at and returns one row per model with at least one offer, picked for
+// Require{} under DefaultWorkload whether discounted or not. Roles re-pick
+// with ForAny.
+func Priced(byID map[string][]Endpoint, at time.Time) []Discount {
+	out := make([]Discount, 0, len(byID))
+	for _, id := range slices.Sorted(maps.Keys(byID)) {
+		d := offers(id, byID[id], at)
+		if len(d.Offers) == 0 {
+			continue
+		}
+		if pick, ok := d.ForAny(Require{}, DefaultWorkload); ok {
+			out = append(out, pick)
+		}
+	}
+	return out
+}
+
+// offers builds a model's row with every endpoint tag it serves and one
+// offer per usable endpoint; no endpoint is picked yet.
+func offers(id string, eps []Endpoint, at time.Time) Discount {
+	d := Discount{ModelID: id, Serves: make([]string, 0, len(eps))}
+	for _, e := range eps {
+		if e.Tag != "" {
+			d.Serves = append(d.Serves, e.Tag)
+		}
+	}
+	for _, e := range usable(eps) {
+		if o, ok := newOffer(e.Provider, e.Tag, e.Pricing, e.ImplicitCaching, at); ok {
+			o.Tools, o.Context = e.tools(), e.ContextLength
+			d.Offers = append(d.Offers, o)
+		}
+	}
+	return d
+}
+
 // endpointDiscounts prices every usable endpoint of each model over the
 // Horizon from at and reports the model when its cheapest offer (Require{},
 // DefaultWorkload) is discounted. A discount undercut by an undiscounted
@@ -380,19 +437,7 @@ func isTransient(status int) bool {
 func endpointDiscounts(byID map[string][]Endpoint, at time.Time) []Discount {
 	out := make([]Discount, 0, len(byID))
 	for _, id := range slices.Sorted(maps.Keys(byID)) {
-		eps := byID[id]
-		d := Discount{ModelID: id, Serves: make([]string, 0, len(eps))}
-		for _, e := range eps {
-			if e.Tag != "" {
-				d.Serves = append(d.Serves, e.Tag)
-			}
-		}
-		for _, e := range usable(eps) {
-			if o, ok := newOffer(e.Provider, e.Tag, e.Pricing, e.ImplicitCaching, at); ok {
-				o.Tools, o.Context = e.tools(), e.ContextLength
-				d.Offers = append(d.Offers, o)
-			}
-		}
+		d := offers(id, byID[id], at)
 		if len(d.Offers) == 0 {
 			continue
 		}

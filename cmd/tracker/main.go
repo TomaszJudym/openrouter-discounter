@@ -40,22 +40,41 @@ func main() {
 	}
 }
 
-func run() error {
+// telegramSender builds the report send. TRACKER_REPORT=false is a
+// presets-only run: the intra-day reruns that repoint presets after a
+// discount ends send nothing and need no Telegram secrets. Each send gets
+// its own deadline: slow fetches before it must not cost the day's report.
+func telegramSender(hc *http.Client) (func(msg string) error, error) {
+	if os.Getenv("TRACKER_REPORT") == "false" {
+		return func(string) error { return nil }, nil
+	}
 	token := os.Getenv("TELEGRAM_BOT_TOKEN")
 	chatID := os.Getenv("TELEGRAM_CHANNEL_ID")
 	if token == "" || chatID == "" {
-		return errors.New("TELEGRAM_BOT_TOKEN and TELEGRAM_CHANNEL_ID are required")
+		return nil, errors.New("TELEGRAM_BOT_TOKEN and TELEGRAM_CHANNEL_ID are required")
+	}
+	return func(msg string) error {
+		sctx, scancel := context.WithTimeout(context.Background(), sendTimeout)
+		defer scancel()
+		return telegram.Send(sctx, hc, token, chatID, msg)
+	}, nil
+}
+
+func run() error {
+	hc := &http.Client{Timeout: 60 * time.Second}
+	send, err := telegramSender(hc)
+	if err != nil {
+		return err
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), runTimeout)
 	defer cancel()
-	hc := &http.Client{Timeout: 60 * time.Second}
 	now := time.Now()
 
 	models, err := discounts.Fetch(ctx, hc)
 	if err != nil {
 		return err
 	}
-	discs, free, err := discounts.FetchDiscounts(ctx, hc, models, now)
+	discs, priced, free, err := discounts.FetchDiscounts(ctx, hc, models, now)
 	if err != nil {
 		// individual endpoint failures are tolerable; the affected models
 		// are simply missing from the report
@@ -66,13 +85,6 @@ func run() error {
 	// picks from the full discounted set, ignoring the ceilings.
 	allDiscs := discs
 	discs = discounts.Affordable(discs)
-	// The Telegram send gets its own deadline: slow fetches before it must
-	// not cost the day's report.
-	send := func(msg string) error {
-		sctx, scancel := context.WithTimeout(context.Background(), sendTimeout)
-		defer scancel()
-		return telegram.Send(sctx, hc, token, chatID, msg)
-	}
 	if len(discs) == 0 {
 		return send(format.NoDiscounts(now))
 	}
@@ -103,7 +115,7 @@ func run() error {
 		sectors = append(sectors, freeSectors...)
 	}
 	if intelOK {
-		sectors = append(sectors, hermesSectors(models, discs, intel, res.Scores[rank.Code].ByModel)...)
+		sectors = append(sectors, hermesSectors(models, discs, priced, intel, res.Scores[rank.Code].ByModel)...)
 	}
 	// Presets update after the Telegram send, so a failure here never costs
 	// the report, but it fails the run so CI shows it.
@@ -226,8 +238,8 @@ func buildFreeDiscoSectors(freeIDs []string, models []discounts.Model, intel map
 
 // hermesSectors selects the per-role Hermes presets and logs each role's
 // #1 pick with its quality source.
-func hermesSectors(models []discounts.Model, discs []discounts.Discount, intel, code map[string]float64) []rank.SectorResult {
-	out := rank.SelectHermes(models, discs, intel, code)
+func hermesSectors(models []discounts.Model, discs, priced []discounts.Discount, intel, code map[string]float64) []rank.SectorResult {
+	out := rank.SelectHermes(models, discs, priced, intel, code)
 	for _, sr := range out {
 		log.Printf("%s: #1 %s (%s %.1f)", sr.Sector, sr.Rows[0].ModelID, sr.Source, sr.Rows[0].Score)
 	}

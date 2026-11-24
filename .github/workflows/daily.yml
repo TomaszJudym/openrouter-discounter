@@ -3,7 +3,13 @@ name: daily
 on:
   schedule:
     # 22:00 UTC = 07:00 JST; JST has no DST, so a fixed cron is exact.
+    # Telegram report and presets.
     - cron: '0 22 * * *'
+    # Every 3 h between: presets only (TRACKER_REPORT=false), so a pick
+    # whose discount ended is replaced within hours. provider.max_price
+    # already stops it billing list price; the rerun restores routing.
+    # Off the hour: GitHub delays and drops top-of-hour schedules.
+    - cron: '7 1-19/3 * * *'
   push:
     branches:
       - master
@@ -32,12 +38,15 @@ jobs:
           TELEGRAM_CHANNEL_ID: ${{ secrets.TELEGRAM_CHANNEL_ID }}
           AA_API_KEY: ${{ secrets.AA_API_KEY }}
           OPENROUTER_MANAGEMENT_KEY: ${{ secrets.OPENROUTER_MANAGEMENT_KEY }}
+          TRACKER_REPORT: ${{ github.event.schedule != '7 1-19/3 * * *' }}
         run: |
           go build -o tracker ./cmd/tracker
           ./tracker
 
   checks:
-    # CI gate: build, vet, race-test, and lint.
+    # CI gate: build, vet, race-test, and lint. Not on schedules: the
+    # intra-day runs only repoint presets, the code has not changed.
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

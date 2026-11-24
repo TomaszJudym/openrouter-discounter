@@ -219,7 +219,7 @@ func TestFetchDiscountsMergesEndpointAndWindowRows(t *testing.T) {
 		{"id":"vendor/broken","name":"Broken","pricing":{"prompt":"0.000002","completion":"0.000008"}},
 		{"id":"vendor/freem:free","name":"Free","pricing":{"prompt":"0","completion":"0"}}
 	]}`)
-	discs, free, err := FetchDiscounts(t.Context(), hc, data, thursday(t))
+	discs, _, free, err := FetchDiscounts(t.Context(), hc, data, thursday(t))
 	if len(free) != 1 || free[0] != "vendor/freem:free" {
 		t.Errorf("free = %v, want [vendor/freem:free]", free)
 	}
@@ -387,5 +387,48 @@ func TestTextOnly(t *testing.T) {
 				t.Errorf("TextOnly() = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestForAnyPicksUndiscounted(t *testing.T) {
+	list := Tariff{Base: Rates{Prompt: 0.1, Completion: 0.2}}
+	promoNow := Tariff{Base: Rates{Prompt: 0.3, Completion: 0.6}}
+	promoWas := Tariff{Base: Rates{Prompt: 0.6, Completion: 1.2}}
+	d := Discount{ModelID: "m/x", Offers: []Offer{
+		{Provider: "Promo", Endpoint: "promo", Avg: promoNow, Peak: promoNow, List: promoWas},
+		{Provider: "Flat", Endpoint: "flat", Avg: list, Peak: list, List: list},
+	}}
+	if _, ok := d.For(Require{}, DefaultWorkload); ok {
+		t.Errorf("For: ok, want false (cheapest offer is not discounted)")
+	}
+	got, ok := d.ForAny(Require{}, DefaultWorkload)
+	if !ok || got.Endpoint != "flat" || got.Pct != 0 {
+		t.Errorf("ForAny = %+v, %v; want flat endpoint, Pct 0", got, ok)
+	}
+	if _, ok := d.ForAny(Require{Tools: true}, DefaultWorkload); ok {
+		t.Errorf("ForAny with unmet Require: ok, want false")
+	}
+}
+
+func TestFetchDiscountsPricedRows(t *testing.T) {
+	hc, _ := stubEndpoints(t)
+	data := mustParse(t, `{"data":[
+		{"id":"vendor/promo","name":"Promo","pricing":{"prompt":"0.000001","completion":"0.000004"}},
+		{"id":"vendor/beaten","name":"Beaten","pricing":{"prompt":"0.000002","completion":"0.000008"}},
+		{"id":"vendor/nodata","name":"NoData","pricing":{"prompt":"0.000002","completion":"0.000008"}}
+	]}`)
+	_, priced, _, err := FetchDiscounts(t.Context(), hc, data, thursday(t))
+	if err != nil {
+		t.Fatalf("err = %v", err)
+	}
+	// every model with endpoint data, discounted or not; nodata has none
+	if len(priced) != 2 || priced[0].ModelID != "vendor/beaten" || priced[1].ModelID != "vendor/promo" {
+		t.Fatalf("priced = %+v, want [vendor/beaten vendor/promo]", priced)
+	}
+	if priced[0].Provider != "List" || priced[0].Pct != 0 {
+		t.Errorf("beaten = %+v, want the undiscounted List offer, Pct 0", priced[0])
+	}
+	if priced[1].Provider != "Cheap" || priced[1].Pct >= 0 {
+		t.Errorf("promo = %+v, want the discounted Cheap offer", priced[1])
 	}
 }

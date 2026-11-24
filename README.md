@@ -2,10 +2,11 @@
 
 Daily Telegram report of discounted OpenRouter models, ranked per category
 (math, long-context, finance, coding) by free benchmark and popularity
-scores. Runs on GitHub Actions daily at 07:00 JST.
+scores. Runs on GitHub Actions daily at 07:00 JST; presets are also
+repointed every 3 hours in between (no report).
 
 ```
-tracker (GitHub Actions, daily 07:00 JST)
+tracker (GitHub Actions, daily 07:00 JST; presets-only every 3 h)
   │
   │ GET  openrouter.ai/api/v1/models                         ← catalog, base prices, AA Intelligence Index
   │ GET  openrouter.ai/api/v1/models/{slug}/endpoints        ← per-provider pricing → discounts
@@ -185,17 +186,30 @@ fallback order.
 | `hermes-delegate` | `delegation.model` | tools | Epoch WebDev Arena (≥ 3 scored), else II | medium |
 | `hermes-vision` | `auxiliary.vision` | image input | II | none |
 | `hermes-compress` | `auxiliary.compression` | ctx ≥ 1M | II | low |
-| `hermes-review` | `auxiliary.background_review`, `curator` | tools | II | medium |
-| `hermes-light` | `auxiliary.title_generation`, `session_search`, `approval`, `goal_judge` | II ≥ 20 | cheapness `100·(1 − blended/ceiling)` | none |
+| `hermes-review` | `auxiliary.background_review`, `curator` | tools | 80% II + 20% cheapness | medium |
+| `hermes-light` | `auxiliary.title_generation`, `session_search`, `approval`, `goal_judge` | II ≥ 20, reasoning not mandatory | cheapness `100·(1 − blended/ceiling)` | none |
 
-Pool: affordable discounted rows (≤ $0.5 prompt / $1 completion per Mtok),
-no `:free`/`:batch`, positive catalog II. Quality is min–max scaled within
-each role (except cheapness, scaled to the ceiling: the blended price of
-$0.5/$1 uncached under the role's request shape); prices are the role's
-re-pick (see the table above). Rank = performance% × quality + price% × (−Δ%).
-Roles pick in table order; a model already #1 in an earlier role loses 15
-points, so it repeats only when clearly best. Hermes' own per-request
-`reasoning_effort` overrides the preset effort.
+Pool: no `:free`/`:batch`, positive catalog II, within the price ceilings
+(≤ $0.5 prompt / $1 completion per Mtok). Delegate, vision and compress draw
+from discounted rows and rank by performance% × quality + price% × (−Δ%).
+Review and light rank by absolute cost, so they draw from every priced
+model, discounted or not: a list-price model that costs less beats a
+pricier discounted one. Quality is min–max scaled within each role;
+cheapness is scaled to the ceiling (the blended price of $0.5/$1 uncached
+under the role's request shape); prices are the role's re-pick (see the
+table above). Roles pick in table order; a model already #1 in an earlier
+role loses 15 points, so it repeats only when clearly best — unless its
+cheapness is ≥ 80 (blended ≤ 20% of the ceiling), then it may serve any
+number of roles. Hermes' own per-request `reasoning_effort` overrides the
+preset effort.
+
+Discount end: a promo `pricing.discount` carries no end time, so it can
+only be detected by rescanning. Each preset's `provider.max_price` caps
+requests at the pinned endpoints' peak rate, so an ended discount never
+bills list price — that model is skipped for the next one in the preset.
+The presets-only reruns every 3 hours (`TRACKER_REPORT=false`, no Telegram)
+then replace it. Scheduled time windows (`pricing.overrides`) are known in
+advance and priced over the 24 h Horizon.
 
 `~/.hermes/config.yaml`:
 

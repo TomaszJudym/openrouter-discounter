@@ -53,10 +53,11 @@ Each category has one score per model, 0–100:
 Ranking:
 
 ```
-final = 0.75 × score + 0.25 × (−Δ%)
+final = performance% × score + price% × (−Δ%)
 ```
 
-Score weighs 75%, discount 25%. Top 10 per category are sent.
+Weights live in `internal/rank/weights.go` (`pricePercent`,
+`performancePercent`, summing to 100). Top 10 per category are sent.
 
 Prices are blended USD per Mtok for one agent request — 30k input tokens,
 80% served from the prompt cache, 1.5k output (half reasoning) — averaged
@@ -130,7 +131,7 @@ Shapes live in `internal/rank/needs.go`; tune them to observed usage.
 With `OPENROUTER_MANAGEMENT_KEY` set, each run also repoints the OpenRouter presets
 `admech-math`, `admech-long`, `admech-finance`, `admech-code`, and
 `admech-code-free` at the 3 best of the category's top-10 table — the same
-composite ranking as the report (0.75 benchmark + 0.25 discount), scored on
+composite ranking as the report (weights.go), scored on
 the category's score. `expensive-long` routes the 3 strongest discounted
 thinking models (catalog AA Intelligence Index, no price ceilings), ordered
 deepest discount first. `strongest-discount-half-light` routes to the top-3 strongest-thinking
@@ -191,7 +192,7 @@ Pool: affordable discounted rows (≤ $0.5 prompt / $1 completion per Mtok),
 no `:free`/`:batch`, positive catalog II. Quality is min–max scaled within
 each role (except cheapness, scaled to the ceiling: the blended price of
 $0.5/$1 uncached under the role's request shape); prices are the role's
-re-pick (see the table above). Rank = 0.75 × quality + 0.25 × (−Δ%).
+re-pick (see the table above). Rank = performance% × quality + price% × (−Δ%).
 Roles pick in table order; a model already #1 in an earlier role loses 15
 points, so it repeats only when clearly best. Hermes' own per-request
 `reasoning_effort` overrides the preset effort.

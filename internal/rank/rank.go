@@ -59,11 +59,6 @@ func (s Sector) Label() string {
 // Sectors lists the ranked sectors in report order.
 var Sectors = []Sector{Math, LCR, Finance, Code, CodeFree}
 
-// scoreWeight is the share of the sector score in the composite ranking
-// score; the remainder weights the discount (−Δ%). Both terms are 0-100, so
-// 0.75 weights benchmark 75% and discount 25%.
-const scoreWeight = 0.75
-
 // Row is one ranked model. Price and Was are blended USD per Mtok; Pct is
 // negative for a discount. Provider names the priced endpoint, empty when
 // any provider gets the price; Endpoint is its tag to pin and Serves every
@@ -436,9 +431,9 @@ func byScoreDesc(a, b Row) int { return cmp.Compare(b.Score, a.Score) }
 func byPct(a, b Row) int { return cmp.Compare(a.Pct, b.Pct) }
 
 // composite is the 0-100 ranking value for a scored row: benchmark weighted
-// by scoreWeight, the remainder discount.
+// by scoreWeight, discount by priceWeight (see weights.go).
 func composite(r Row) float64 {
-	return scoreWeight*r.Score + (1-scoreWeight)*(-r.Pct)
+	return scoreWeight*r.Score + priceWeight*(-r.Pct)
 }
 
 // Candidate is a scored model submitted to ScoreModels: its OpenRouter id,

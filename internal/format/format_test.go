@@ -47,7 +47,7 @@ func TestMessagesLayoutAndAlignment(t *testing.T) {
 		"MATH — top 10 discounted (Epoch OTIS Mock AIME)",
 		"FINANCE — top 10 discounted (AA Finance &amp; Accounting)",
 		"⚠️ scored only by price — Artificial Analysis error: 429 rate limit, retries exhausted",
-		"prices: 24h-avg blended $/Mtok, 30k in (80% cached) + 1.5k out",
+		"prices: 4h-avg blended $/Mtok, 30k in (80% cached) + 1.5k out",
 		"#  model                    provider        was→now      Δ% score",
 		"1  deepseek/deepseek-chat   GMICloud      0.280→0.140   -50  68.2",
 		"2  qwen/qwen3-235b-a22b     any           0.180→0.090   -50   n/a",

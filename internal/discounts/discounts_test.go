@@ -432,3 +432,40 @@ func TestFetchDiscountsPricedRows(t *testing.T) {
 		t.Errorf("promo = %+v, want the discounted Cheap offer", priced[1])
 	}
 }
+
+func TestShortHorizonPricesWindowByUse(t *testing.T) {
+	old := Horizon
+	Horizon = 4 * time.Hour
+	t.Cleanup(func() { Horizon = old })
+	// half price 15:00–01:00 UTC: a 4 h Horizon inside the window sees the
+	// full -50%, one outside it sees no discount (a day dilutes both)
+	window := Endpoint{Provider: "Minimax", Tag: "minimax", Pricing: Pricing{
+		Prompt: "0.00000015", Completion: "0.0000006",
+		Overrides: []Override{{Start: new(1500), End: new(100), Prompt: "0.000000075", Completion: "0.0000003"}},
+	}}
+	byID := map[string][]Endpoint{"minimax/m": {window}}
+	in := time.Date(2026, 11, 17, 16, 0, 0, 0, time.UTC)
+	got := endpointDiscounts(byID, in)
+	if len(got) != 1 || !floatEq(got[0].Pct, -50) || !floatEq(got[0].PeakPrompt, 0.075) {
+		t.Fatalf("inside window: %+v, want -50%% with peak 0.075", got)
+	}
+	if got := endpointDiscounts(byID, in.Add(-12*time.Hour)); len(got) != 0 {
+		t.Errorf("outside window: %+v, want none", got)
+	}
+}
+
+func TestMinOutputFiltersShortEndpoints(t *testing.T) {
+	t1 := Tariff{Base: Rates{Prompt: 0.1, Completion: 0.2}}
+	t2 := Tariff{Base: Rates{Prompt: 0.2, Completion: 0.4}}
+	d := Discount{ModelID: "m/x", Offers: []Offer{
+		{Endpoint: "short", Avg: t1, Peak: t1, List: t1, MaxOutput: 16384},
+		{Endpoint: "long", Avg: t2, Peak: t2, List: t2, MaxOutput: 131072},
+	}}
+	got, ok := d.ForAny(Require{MinOutput: 65536}, DefaultWorkload)
+	if !ok || got.Endpoint != "long" {
+		t.Errorf("ForAny(MinOutput 65536) = %+v, %v; want the long endpoint", got, ok)
+	}
+	if got, _ := d.ForAny(Require{}, DefaultWorkload); got.Endpoint != "short" {
+		t.Errorf("ForAny() = %s, want short (cheapest, no output need)", got.Endpoint)
+	}
+}

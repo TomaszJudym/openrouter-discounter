@@ -116,6 +116,10 @@ func run() error {
 	}
 	if intelOK {
 		sectors = append(sectors, hermesSectors(models, discs, priced, intel, res.Scores[rank.Code].ByModel)...)
+		if hf := rank.SelectHindsightFree(free, models, intel); len(hf.Rows) > 0 {
+			log.Printf("%s: %v", hf.Sector, rowIDs(hf.Rows))
+			sectors = append(sectors, hf)
+		}
 	}
 	// Presets update after the Telegram send, so a failure here never costs
 	// the report, but it fails the run so CI shows it.
@@ -234,6 +238,15 @@ func buildFreeDiscoSectors(freeIDs []string, models []discounts.Model, intel map
 		return nil
 	}
 	return []rank.SectorResult{base}
+}
+
+// rowIDs lists the rows' model ids, for logs.
+func rowIDs(rows []rank.Row) []string {
+	ids := make([]string, len(rows))
+	for i, r := range rows {
+		ids[i] = r.ModelID
+	}
+	return ids
 }
 
 // hermesSectors selects the per-role Hermes presets and logs each role's

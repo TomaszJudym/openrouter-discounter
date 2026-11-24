@@ -3,10 +3,10 @@
 Daily Telegram report of discounted OpenRouter models, ranked per category
 (math, long-context, finance, coding) by free benchmark and popularity
 scores. Runs on GitHub Actions daily at 07:00 JST; presets are also
-repointed every 3 hours in between (no report).
+repointed every 2 hours in between (no report).
 
 ```
-tracker (GitHub Actions, daily 07:00 JST; presets-only every 3 h)
+tracker (GitHub Actions, daily 07:00 JST; presets-only every 2 h)
   │
   │ GET  openrouter.ai/api/v1/models                         ← catalog, base prices, AA Intelligence Index
   │ GET  openrouter.ai/api/v1/models/{slug}/endpoints        ← per-provider pricing → discounts
@@ -62,15 +62,16 @@ Weights live in `internal/rank/weights.go` (`pricePercent`,
 
 Prices are blended USD per Mtok for one agent request — 30k input tokens,
 80% served from the prompt cache, 1.5k output (half reasoning) — averaged
-over the 24 hours the run's picks stay pinned. Cache reads bill at
+over the 4 hours the run's picks stay pinned (`discounts.Horizon`;
+presets are repointed every 2 h, so one missed run is covered). Cache reads bill at
 `input_cache_read` only on endpoints with implicit caching (no
 `cache_control` breakpoints are assumed; flip `discounts.ExplicitCaching`
 if your client sends them), misses at `max(prompt, input_cache_write)`,
 reasoning at `internal_reasoning` when listed. Δ% is the change vs the
 provider's list price. A provider's `discount` and `pricing.overrides` time
 windows (`utc_start`/`utc_end`, HHMM UTC, may wrap midnight; optional
-`utc_days`) both count: a window covering 10 of the next 24 hours at half
-price shows as −21%. The run logs every window discount with its hours.
+`utc_days`) both count: a window covering 2 of the next 4 hours at half
+price shows as −25%. The run logs every window discount with its hours.
 
 Each model is priced at its single cheapest endpoint by that blended
 price, and the `provider` column names it. A model counts as discounted only
@@ -139,8 +140,10 @@ deepest discount first. `strongest-discount-half-light` routes to the top-3 stro
 (catalog AA Intelligence Index) discounted chat models, carries the HALF-LIGHT persona
 prompt with reasoning effort high and verbosity low, and adds sampling settings
 (temperature 1.0, top_p 0.95, min_p 0.05, frequency_penalty 0,
-presence_penalty 0.1, max_tokens 16384); the other strongest-discount-* and
-`halflight-free` presets share them. Frequency penalty stays 0 and temperature
+presence_penalty 0.1, max_tokens 65536); the other strongest-discount-*
+presets share them, and `halflight-free` too with max_tokens 16384. Hermes'
+main model sends no max_tokens, so 65536 must fit long tool calls (file
+writes); the pinned endpoints must allow it (`max_completion_tokens`). Frequency penalty stays 0 and temperature
 at 1: higher values (previously 1.15 / 0.4) penalize every common token over a
 long reply, reasoning included, and the output collapses into word salad that
 then poisons the rest of the session. min_p cuts the low-probability tail that
@@ -207,9 +210,21 @@ Discount end: a promo `pricing.discount` carries no end time, so it can
 only be detected by rescanning. Each preset's `provider.max_price` caps
 requests at the pinned endpoints' peak rate, so an ended discount never
 bills list price — that model is skipped for the next one in the preset.
-The presets-only reruns every 3 hours (`TRACKER_REPORT=false`, no Telegram)
+The presets-only reruns every 2 hours (`TRACKER_REPORT=false`, no Telegram)
 then replace it. Scheduled time windows (`pricing.overrides`) are known in
-advance and priced over the 24 h Horizon.
+advance and priced over the 4 h Horizon.
+
+`hindsight-free` backs the Hindsight memory daemon's consolidation and
+reflect jobs (`HINDSIGHT_API_{CONSOLIDATION,REFLECT}_LLM_MODEL=@preset/hindsight-free`).
+It routes the top 3 free chat models that call tools (reflect is a tool loop),
+strongest first by AA Intelligence Index, dropping models under half the
+best score and harness-only endpoints; on equal scores, models accepting
+`response_format` / `structured_outputs` lead. Unpinned, reasoning
+effort low, and a system prompt (`internal/preset/hindsight.txt`) framing the
+model as a memory component: exact JSON, no invented facts. Hindsight asks
+for JSON on every call; for picks without `response_format`, set
+`provider.require_parameters: false` in the daemon's `*_LLM_EXTRA_BODY` so
+the schema goes in the prompt instead of failing routing.
 
 `~/.hermes/config.yaml`:
 
@@ -246,5 +261,7 @@ work too, if `GOTOOLCHAIN` allows.
 
 ## Keepalive
 
-GitHub disables scheduled workflows after 60 days without commits; a separate
-job re-enables the workflow via API — no dummy commits.
+GitHub disables scheduled workflows after 60 days without repository
+activity. The `keepalive` job (`gautamkrishnar/keepalive-workflow@v2`, API
+mode, `actions: write`) runs on the daily schedule and re-enables the
+workflow — no dummy commits.

@@ -2,6 +2,11 @@ package rank
 
 import "github.com/tomaszjudym/openrouter-discounter/internal/discounts"
 
+// PersonaMaxTokens is the strongest-discount persona presets' max_tokens.
+// Hermes sends none, so it caps every main-model reply, including long tool
+// calls such as file writes; pinned endpoints must allow at least this much.
+const PersonaMaxTokens = 65536
+
 // Need is what a preset asks of its pinned endpoints and the request shape
 // its prices are compared under.
 type Need struct {
@@ -32,7 +37,7 @@ var (
 // within the price ceilings too.
 var needs = map[Sector]Need{
 	ExpensiveLong:              {discounts.Require{}, discounts.LongWorkload},
-	StrongestDiscountHalflight: {discounts.Require{Tools: true, Capped: true}, personaWorkload},
+	StrongestDiscountHalflight: {discounts.Require{Tools: true, Capped: true, MinOutput: PersonaMaxTokens}, personaWorkload},
 	HermesDelegate:             {discounts.Require{Tools: true, Capped: true}, delegateWorkload},
 	HermesReview:               {discounts.Require{Tools: true, Capped: true}, reviewWorkload},
 	HermesCompress:             {discounts.Require{MinContext: compressMinCtx, Capped: true}, compressWorkload},

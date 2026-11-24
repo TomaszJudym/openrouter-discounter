@@ -33,7 +33,7 @@ var htmlEscaper = strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;")
 
 // priceNote explains the price columns: blended per Mtok under the default
 // workload, averaged over the day the picks stay pinned.
-var priceNote = "prices: 24h-avg blended $/Mtok, " + discounts.DefaultWorkload.String()
+var priceNote = fmt.Sprintf("prices: %gh-avg blended $/Mtok, ", discounts.Horizon.Hours()) + discounts.DefaultWorkload.String()
 
 // jst is Japan Standard Time; JST has no DST so a fixed zone is exact.
 var jst = time.FixedZone("JST", 9*3600)

@@ -5,11 +5,12 @@ on:
     # 22:00 UTC = 07:00 JST; JST has no DST, so a fixed cron is exact.
     # Telegram report and presets.
     - cron: '0 22 * * *'
-    # Every 3 h between: presets only (TRACKER_REPORT=false), so a pick
+    # Every 2 h between: presets only (TRACKER_REPORT=false), so a pick
     # whose discount ended is replaced within hours. provider.max_price
     # already stops it billing list price; the rerun restores routing.
+    # Prices average over a 4 h Horizon: one missed run is covered.
     # Off the hour: GitHub delays and drops top-of-hour schedules.
-    - cron: '7 1-19/3 * * *'
+    - cron: '7 0-20/2 * * *'
   push:
     branches:
       - master
@@ -38,7 +39,7 @@ jobs:
           TELEGRAM_CHANNEL_ID: ${{ secrets.TELEGRAM_CHANNEL_ID }}
           AA_API_KEY: ${{ secrets.AA_API_KEY }}
           OPENROUTER_MANAGEMENT_KEY: ${{ secrets.OPENROUTER_MANAGEMENT_KEY }}
-          TRACKER_REPORT: ${{ github.event.schedule != '7 1-19/3 * * *' }}
+          TRACKER_REPORT: ${{ github.event.schedule != '7 0-20/2 * * *' }}
         run: |
           go build -o tracker ./cmd/tracker
           ./tracker
@@ -75,3 +76,13 @@ jobs:
       actions: write
     steps:
       - uses: liskin/gh-workflow-keepalive@v1
+
+  keepalive:
+    # GitHub disables a repo's schedules after 60 days without activity.
+    # API mode re-enables the workflow; no dummy commits. Once a day.
+    if: github.event_name == 'schedule' && github.event.schedule == '0 22 * * *'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
+      - uses: gautamkrishnar/keepalive-workflow@v2

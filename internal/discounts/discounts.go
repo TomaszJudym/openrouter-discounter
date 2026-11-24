@@ -9,7 +9,7 @@
 // window (utc_start/utc_end HHMM, optional utc_days) priced below the base.
 //
 // Prices compare as blended USD per Mtok under a request workload (see
-// Workload), averaged over the 24 hours the run's picks stay pinned (see
+// Workload), averaged over the hours the run's picks stay pinned (see
 // Horizon): cache-read, cache-write and reasoning rates count, not only the
 // prompt rate. Per model the pick is the single cheapest endpoint that
 // passes the flex and quantization filters (see usable) and meets the
@@ -119,6 +119,12 @@ func (m Model) MandatoryReasoning() bool {
 	return m.Reasoning != nil && m.Reasoning.Mandatory
 }
 
+// StructuredOutput reports whether the model accepts response_format or
+// structured_outputs, so a JSON schema can be enforced instead of prompted.
+func (m Model) StructuredOutput() bool {
+	return slices.Contains(m.SupportedParameters, "response_format") || slices.Contains(m.SupportedParameters, "structured_outputs")
+}
+
 // ToolCalling reports whether the model accepts function/tool definitions:
 // the catalog lists "tools" in supported_parameters.
 func (m Model) ToolCalling() bool {
@@ -158,6 +164,7 @@ type Endpoint struct {
 	Pricing         Pricing  `json:"pricing"`
 	Quantization    string   `json:"quantization"`
 	ContextLength   int      `json:"context_length"`
+	MaxCompletion   int      `json:"max_completion_tokens"`
 	Parameters      []string `json:"supported_parameters"`
 	ImplicitCaching bool     `json:"supports_implicit_caching"`
 	ToolChoice      struct {
@@ -423,7 +430,7 @@ func offers(id string, eps []Endpoint, at time.Time) Discount {
 	}
 	for _, e := range usable(eps) {
 		if o, ok := newOffer(e.Provider, e.Tag, e.Pricing, e.ImplicitCaching, at); ok {
-			o.Tools, o.Context = e.tools(), e.ContextLength
+			o.Tools, o.Context, o.MaxOutput = e.tools(), e.ContextLength, e.MaxCompletion
 			d.Offers = append(d.Offers, o)
 		}
 	}

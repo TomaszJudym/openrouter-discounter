@@ -41,6 +41,9 @@ var volitionPromptFile string
 //go:embed shivers.txt
 var shiversPromptFile string
 
+//go:embed hindsight.txt
+var hindsightPromptFile string
+
 // systemPrompt is the system instruction written into every preset version.
 var systemPrompt = strings.TrimSpace(systemPromptFile)
 
@@ -55,6 +58,9 @@ var inlandempirePrompt = strings.TrimSpace(inlandempirePromptFile)
 
 // shiversPrompt is the SHIVERS persona used only for strongest-discount-shivers.
 var shiversPrompt = strings.TrimSpace(shiversPromptFile)
+
+// hindsightPrompt frames the hindsight-free models as a memory component.
+var hindsightPrompt = strings.TrimSpace(hindsightPromptFile)
 
 // verbosity is requested on every update even when the routed model does not
 // support it: the API stores it in the preset config, and frontier models
@@ -87,14 +93,14 @@ type presetSpec struct {
 // presence penalty low for the same reason; top_p and min_p cut the
 // low-probability tail the salad is drawn from. Effort high instead of max
 // keeps reasoning short; max_tokens bounds a runaway reply.
-func persona(prompt string) presetSpec {
+func persona(prompt string, maxTokens int) presetSpec {
 	return presetSpec{
 		systemPrompt:     prompt,
 		effort:           "high",
 		reasoningEnabled: true,
 		sampling:         true,
 		minP:             0.05,
-		maxTokens:        16384,
+		maxTokens:        maxTokens,
 		temperature:      1.0,
 		topP:             0.95,
 		frequencyPenalty: 0,
@@ -104,24 +110,34 @@ func persona(prompt string) presetSpec {
 
 // specs maps sectors to their preset specifications.
 var specs = map[rank.Sector]presetSpec{
-	rank.Math:                          {systemPrompt: systemPrompt, reasoningEnabled: false},
-	rank.LCR:                           {systemPrompt: systemPrompt, reasoningEnabled: false},
-	rank.Finance:                       {systemPrompt: systemPrompt, reasoningEnabled: false},
-	rank.Code:                          {systemPrompt: systemPrompt, reasoningEnabled: false},
-	rank.CodeFree:                      {systemPrompt: systemPrompt, reasoningEnabled: false},
-	rank.ExpensiveLong:                 {systemPrompt: systemPrompt, reasoningEnabled: false},
-	rank.StrongestDiscountHalflight:    persona(halflightPrompt),
-	rank.StrongestDiscountVolition:     persona(volitionPrompt),
-	rank.StrongestDiscountInlandEmpire: persona(inlandempirePrompt),
-	rank.StrongestDiscountShivers:      persona(shiversPrompt),
-	rank.FreeHalflight:                 persona(halflightPrompt),
+	rank.Math:          {systemPrompt: systemPrompt, reasoningEnabled: false},
+	rank.LCR:           {systemPrompt: systemPrompt, reasoningEnabled: false},
+	rank.Finance:       {systemPrompt: systemPrompt, reasoningEnabled: false},
+	rank.Code:          {systemPrompt: systemPrompt, reasoningEnabled: false},
+	rank.CodeFree:      {systemPrompt: systemPrompt, reasoningEnabled: false},
+	rank.ExpensiveLong: {systemPrompt: systemPrompt, reasoningEnabled: false},
+	// strongest-discount-* back the Hermes main model, which sends no
+	// max_tokens: the cap must fit long tool calls (file writes). Their
+	// pinned endpoints are required to allow it (rank.PersonaMaxTokens).
+	rank.StrongestDiscountHalflight:    persona(halflightPrompt, rank.PersonaMaxTokens),
+	rank.StrongestDiscountVolition:     persona(volitionPrompt, rank.PersonaMaxTokens),
+	rank.StrongestDiscountInlandEmpire: persona(inlandempirePrompt, rank.PersonaMaxTokens),
+	rank.StrongestDiscountShivers:      persona(shiversPrompt, rank.PersonaMaxTokens),
+	// free models route unpinned, so their output limits are unknown
+	rank.FreeHalflight: persona(halflightPrompt, freeMaxTokens),
 	// Task presets: none talks to the user, so none carries a prompt.
 	rank.HermesDelegate: {hermes: true, effort: "medium"},
 	rank.HermesReview:   {hermes: true, effort: "medium"},
 	rank.HermesCompress: {hermes: true, effort: "low"},
 	rank.HermesVision:   {hermes: true, effort: "none"},
 	rank.HermesLight:    {hermes: true, effort: "none"},
+	// Hindsight sends its own task prompts; the system prompt frames the
+	// model as a memory component. Low effort: extraction, not reasoning.
+	rank.HindsightFree: {systemPrompt: hindsightPrompt, hermes: true, effort: "low"},
 }
+
+// freeMaxTokens caps the free persona preset's replies.
+const freeMaxTokens = 16384
 
 // effortFor is the spec's reasoning effort, defaulting to reasoningEffort.
 func effortFor(spec presetSpec) string {
@@ -149,6 +165,7 @@ var Slugs = map[rank.Sector]string{
 	rank.HermesCompress:                "hermes-compress",
 	rank.HermesReview:                  "hermes-review",
 	rank.HermesLight:                   "hermes-light",
+	rank.HindsightFree:                 "hindsight-free",
 }
 
 // TopN is how many models each preset routes.

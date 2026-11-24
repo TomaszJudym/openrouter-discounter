@@ -255,8 +255,8 @@ func TestStrongestDiscountPostBody(t *testing.T) {
 	if body["min_p"] != 0.05 {
 		t.Errorf("min_p = %v, want 0.05", body["min_p"])
 	}
-	if body["max_tokens"] != 16384.0 {
-		t.Errorf("max_tokens = %v, want 16384", body["max_tokens"])
+	if body["max_tokens"] != float64(rank.PersonaMaxTokens) {
+		t.Errorf("max_tokens = %v, want %d", body["max_tokens"], rank.PersonaMaxTokens)
 	}
 }
 
@@ -359,7 +359,7 @@ func matchingStrongestDiscountVersion() presetResponse {
 	r.Data.DesignatedVersion.Config.PresencePenalty = &pres
 	minP := 0.05
 	r.Data.DesignatedVersion.Config.MinP = &minP
-	maxTok := 16384
+	maxTok := rank.PersonaMaxTokens
 	r.Data.DesignatedVersion.Config.MaxTokens = &maxTok
 	return r
 }
@@ -729,5 +729,26 @@ func TestPinnedVersionTolerantRoundTrip(t *testing.T) {
 	c := &Client{hc: srv.Client(), key: "test-or-key", base: srv.URL + "/api/v1"}
 	if updated, err := c.Update(t.Context(), pinnedRows()); err != nil || updated || posts != 0 {
 		t.Errorf("Update() = %v, %v with %d POSTs, want false, nil, 0 (unchanged)", updated, err, posts)
+	}
+}
+
+func TestHindsightFreeBody(t *testing.T) {
+	spec := specs[rank.HindsightFree]
+	body := makeBody(spec, []string{"a/m:free"}, pin{})
+	msgs := body["messages"].([]map[string]string)
+	if msgs[0]["role"] != "system" || !strings.Contains(msgs[0]["content"], "memory-processing component") {
+		t.Errorf("messages = %v, want the hindsight system prompt", msgs)
+	}
+	if _, ok := body["verbosity"]; ok {
+		t.Errorf("verbosity set on a Hermes-style preset")
+	}
+	if _, ok := body["provider"]; ok {
+		t.Errorf("free preset pinned: %v", body["provider"])
+	}
+	if r := body["reasoning"].(map[string]any); r["effort"] != "low" {
+		t.Errorf("reasoning = %v, want effort low", r)
+	}
+	if Slugs[rank.HindsightFree] != "hindsight-free" {
+		t.Errorf("slug = %q", Slugs[rank.HindsightFree])
 	}
 }

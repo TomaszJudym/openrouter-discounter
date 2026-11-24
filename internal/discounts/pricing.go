@@ -249,11 +249,14 @@ func (p Pricing) hasWindows() bool {
 }
 
 // Horizon is how long one run's picks stay pinned: an offer's price is its
-// average over the Horizon from the run, sampled every sampleStep.
-const (
-	Horizon    = 24 * time.Hour
-	sampleStep = 5 * time.Minute
-)
+// average over the Horizon from the run, and max_price caps at its peak.
+// Presets are repointed every 2 h, so 4 h covers one missed run; a short
+// Horizon prices a time-window discount by the hours it is actually used,
+// not diluted over a day. A var only so tests can pin it (see TestMain).
+var Horizon = 4 * time.Hour
+
+// sampleStep is the Horizon's sampling interval.
+const sampleStep = 5 * time.Minute
 
 // ExplicitCaching reports whether clients mark prompt-cache breakpoints
 // (cache_control). Without them only endpoints with implicit caching bill
@@ -263,17 +266,18 @@ var ExplicitCaching = false
 // Offer is one usable endpoint priced over the Horizon from the run. Avg is
 // the time-average tariff, Peak the highest rates billed (for max_price),
 // List the price before the endpoint's discount. Window names the windows
-// priced below the base within the Horizon. Tools and Context are the
-// endpoint's own support (Context 0: unknown).
+// priced below the base within the Horizon. Tools, Context and MaxOutput
+// are the endpoint's own support (Context, MaxOutput 0: unknown).
 type Offer struct {
-	Provider string
-	Endpoint string // tag for provider.only; empty for catalog offers
-	Window   string
-	Avg      Tariff
-	Peak     Tariff
-	List     Tariff
-	Tools    bool
-	Context  int
+	Provider  string
+	Endpoint  string // tag for provider.only; empty for catalog offers
+	Window    string
+	Avg       Tariff
+	Peak      Tariff
+	List      Tariff
+	Tools     bool
+	Context   int
+	MaxOutput int // max_completion_tokens
 }
 
 // newOffer prices one endpoint (or the catalog, tag "") over the Horizon
@@ -322,6 +326,9 @@ type Require struct {
 	Tools      bool // endpoint accepts tools (tool_choice auto)
 	MinContext int  // context tokens; the workload must fit regardless
 	Capped     bool // average rates within MaxPrompt and MaxCompletion
+	// MinOutput is the preset's max_tokens: a pinned endpoint with a lower
+	// max_completion_tokens would be filtered out by OpenRouter.
+	MinOutput int
 }
 
 // meets reports whether the offer satisfies r for requests shaped like w.
@@ -330,6 +337,9 @@ func (o Offer) meets(r Require, w Workload) bool {
 		return false
 	}
 	if need := max(r.MinContext, int(w.Input+w.Output)); o.Context > 0 && o.Context < need {
+		return false
+	}
+	if r.MinOutput > 0 && o.MaxOutput > 0 && o.MaxOutput < r.MinOutput {
 		return false
 	}
 	if r.Capped {

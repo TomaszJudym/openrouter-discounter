@@ -15,5 +15,12 @@ var (
 	priceWeight = pricePercent / 100.0
 )
 
-// Weights sum to 100: a compile error otherwise (negative array length).
-var _ [1 - 2*((pricePercent+performancePercent-100)*(pricePercent+performancePercent-100))]struct{}
+// Compile-time guards (negative array length fails the build): each weight
+// is in 0-100 and both sum to 100.
+var (
+	_ [pricePercent]struct{}
+	_ [100 - pricePercent]struct{}
+	_ [performancePercent]struct{}
+	_ [100 - performancePercent]struct{}
+	_ [1 - 2*((pricePercent+performancePercent-100)*(pricePercent+performancePercent-100))]struct{}
+)

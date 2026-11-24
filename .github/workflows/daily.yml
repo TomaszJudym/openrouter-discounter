@@ -76,13 +76,3 @@ jobs:
       actions: write
     steps:
       - uses: liskin/gh-workflow-keepalive@v1
-
-  keepalive:
-    # GitHub disables a repo's schedules after 60 days without activity.
-    # API mode re-enables the workflow; no dummy commits. Once a day.
-    if: github.event_name == 'schedule' && github.event.schedule == '0 22 * * *'
-    runs-on: ubuntu-latest
-    permissions:
-      actions: write
-    steps:
-      - uses: gautamkrishnar/keepalive-workflow@v2

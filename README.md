@@ -262,6 +262,6 @@ work too, if `GOTOOLCHAIN` allows.
 ## Keepalive
 
 GitHub disables scheduled workflows after 60 days without repository
-activity. The `keepalive` job (`gautamkrishnar/keepalive-workflow@v2`, API
-mode, `actions: write`) runs on the daily schedule and re-enables the
-workflow — no dummy commits.
+activity. The `keepalive` job (`liskin/gh-workflow-keepalive@v1`,
+`actions: write`) re-enables the workflow via the API on scheduled runs —
+no dummy commits.

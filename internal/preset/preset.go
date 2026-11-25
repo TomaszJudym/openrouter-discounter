@@ -41,9 +41,6 @@ var volitionPromptFile string
 //go:embed shivers.txt
 var shiversPromptFile string
 
-//go:embed hindsight.txt
-var hindsightPromptFile string
-
 // systemPrompt is the system instruction written into every preset version.
 var systemPrompt = strings.TrimSpace(systemPromptFile)
 
@@ -58,9 +55,6 @@ var inlandempirePrompt = strings.TrimSpace(inlandempirePromptFile)
 
 // shiversPrompt is the SHIVERS persona used only for strongest-discount-shivers.
 var shiversPrompt = strings.TrimSpace(shiversPromptFile)
-
-// hindsightPrompt frames the hindsight-free models as a memory component.
-var hindsightPrompt = strings.TrimSpace(hindsightPromptFile)
 
 // verbosity is requested on every update even when the routed model does not
 // support it: the API stores it in the preset config, and frontier models
@@ -129,9 +123,6 @@ var specs = map[rank.Sector]presetSpec{
 	rank.HermesCompress: {hermes: true, effort: "low"},
 	rank.HermesVision:   {hermes: true, effort: "none"},
 	rank.HermesLight:    {hermes: true, effort: "none"},
-	// Hindsight sends its own task prompts; the system prompt frames the
-	// model as a memory component. Low effort: extraction, not reasoning.
-	rank.HindsightFree: {systemPrompt: hindsightPrompt, hermes: true, effort: "low"},
 }
 
 // effortFor is the spec's reasoning effort, defaulting to reasoningEffort.
@@ -159,7 +150,6 @@ var Slugs = map[rank.Sector]string{
 	rank.HermesCompress:                "hermes-compress",
 	rank.HermesReview:                  "hermes-review",
 	rank.HermesLight:                   "hermes-light",
-	rank.HindsightFree:                 "hindsight-free",
 }
 
 // TopN is how many models each preset routes.

@@ -214,18 +214,6 @@ The presets-only reruns every 2 hours (`TRACKER_REPORT=false`, no Telegram)
 then replace it. Scheduled time windows (`pricing.overrides`) are known in
 advance and priced over the 4 h Horizon.
 
-`hindsight-free` backs the Hindsight memory daemon's consolidation and
-reflect jobs (`HINDSIGHT_API_{CONSOLIDATION,REFLECT}_LLM_MODEL=@preset/hindsight-free`).
-It routes the top 3 free chat models that call tools (reflect is a tool loop),
-strongest first by AA Intelligence Index, dropping models under half the
-best score and harness-only endpoints; on equal scores, models accepting
-`response_format` / `structured_outputs` lead. Unpinned, reasoning
-effort low, and a system prompt (`internal/preset/hindsight.txt`) framing the
-model as a memory component: exact JSON, no invented facts. Hindsight asks
-for JSON on every call; for picks without `response_format`, set
-`provider.require_parameters: false` in the daemon's `*_LLM_EXTRA_BODY` so
-the schema goes in the prompt instead of failing routing.
-
 `~/.hermes/config.yaml`:
 
 ```yaml

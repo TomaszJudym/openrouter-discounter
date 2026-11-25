@@ -43,7 +43,6 @@ var labels = map[Sector]string{
 	StrongestDiscountInlandEmpire: "STRONGEST-DISCOUNT-INLANDEMPIRE — top 3 strongest-thinking discounted",
 	StrongestDiscountShivers:      "STRONGEST-DISCOUNT-SHIVERS — top 3 strongest-thinking discounted",
 	FreeHalflight:                 "FREE-HALFLIGHT — top 3 free models (AA Intelligence Index)",
-	HindsightFree:                 "HINDSIGHT-FREE — top 3 free tool-calling models (AA Intelligence Index)",
 }
 
 // Label is the display header for the sector.

@@ -731,24 +731,3 @@ func TestPinnedVersionTolerantRoundTrip(t *testing.T) {
 		t.Errorf("Update() = %v, %v with %d POSTs, want false, nil, 0 (unchanged)", updated, err, posts)
 	}
 }
-
-func TestHindsightFreeBody(t *testing.T) {
-	spec := specs[rank.HindsightFree]
-	body := makeBody(spec, []string{"a/m:free"}, pin{})
-	msgs := body["messages"].([]map[string]string)
-	if msgs[0]["role"] != "system" || !strings.Contains(msgs[0]["content"], "memory-processing component") {
-		t.Errorf("messages = %v, want the hindsight system prompt", msgs)
-	}
-	if _, ok := body["verbosity"]; ok {
-		t.Errorf("verbosity set on a Hermes-style preset")
-	}
-	if _, ok := body["provider"]; ok {
-		t.Errorf("free preset pinned: %v", body["provider"])
-	}
-	if r := body["reasoning"].(map[string]any); r["effort"] != "low" {
-		t.Errorf("reasoning = %v, want effort low", r)
-	}
-	if Slugs[rank.HindsightFree] != "hindsight-free" {
-		t.Errorf("slug = %q", Slugs[rank.HindsightFree])
-	}
-}

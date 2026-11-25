@@ -222,15 +222,6 @@ func buildIntelSectors(models []discounts.Model, discs []discounts.Discount, int
 	}
 }
 
-// rowIDs lists the rows' model ids, for logs.
-func rowIDs(rows []rank.Row) []string {
-	ids := make([]string, len(rows))
-	for i, r := range rows {
-		ids[i] = r.ModelID
-	}
-	return ids
-}
-
 // hermesSectors selects the per-role Hermes presets and logs each role's
 // #1 pick with its quality source.
 func hermesSectors(models []discounts.Model, discs, priced []discounts.Discount, intel, code map[string]float64) []rank.SectorResult {

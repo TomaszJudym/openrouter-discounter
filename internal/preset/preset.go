@@ -123,8 +123,6 @@ var specs = map[rank.Sector]presetSpec{
 	rank.StrongestDiscountVolition:     persona(volitionPrompt, rank.PersonaMaxTokens),
 	rank.StrongestDiscountInlandEmpire: persona(inlandempirePrompt, rank.PersonaMaxTokens),
 	rank.StrongestDiscountShivers:      persona(shiversPrompt, rank.PersonaMaxTokens),
-	// free models route unpinned, so their output limits are unknown
-	rank.FreeHalflight: persona(halflightPrompt, freeMaxTokens),
 	// Task presets: none talks to the user, so none carries a prompt.
 	rank.HermesDelegate: {hermes: true, effort: "medium"},
 	rank.HermesReview:   {hermes: true, effort: "medium"},
@@ -135,9 +133,6 @@ var specs = map[rank.Sector]presetSpec{
 	// model as a memory component. Low effort: extraction, not reasoning.
 	rank.HindsightFree: {systemPrompt: hindsightPrompt, hermes: true, effort: "low"},
 }
-
-// freeMaxTokens caps the free persona preset's replies.
-const freeMaxTokens = 16384
 
 // effortFor is the spec's reasoning effort, defaulting to reasoningEffort.
 func effortFor(spec presetSpec) string {
@@ -159,7 +154,6 @@ var Slugs = map[rank.Sector]string{
 	rank.StrongestDiscountVolition:     "strongest-discount-volition",
 	rank.StrongestDiscountInlandEmpire: "strongest-discount-inlandempire",
 	rank.StrongestDiscountShivers:      "strongest-discount-shivers",
-	rank.FreeHalflight:                 "halflight-free",
 	rank.HermesDelegate:                "hermes-delegate",
 	rank.HermesVision:                  "hermes-vision",
 	rank.HermesCompress:                "hermes-compress",

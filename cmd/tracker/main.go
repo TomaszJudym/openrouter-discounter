@@ -97,7 +97,7 @@ func run() error {
 		log.Printf("catalog carries no intelligence index (skipping strongest-discount)")
 	}
 	telegramSectors := res.Sectors
-	sdSectors, freeSectors := buildIntelSectors(models, discs, free, intel, intelOK)
+	sdSectors := buildIntelSectors(models, discs, intel, intelOK)
 	if len(sdSectors) > 0 {
 		telegramSectors = append(telegramSectors, sdSectors[0])
 	}
@@ -110,9 +110,6 @@ func run() error {
 	sectors := append(res.Sectors, rank.SelectExpensiveLong(models, allDiscs))
 	if intelOK && len(sdSectors) > 0 {
 		sectors = append(sectors, sdSectors...)
-	}
-	if intelOK && len(freeSectors) > 0 {
-		sectors = append(sectors, freeSectors...)
 	}
 	if intelOK {
 		sectors = append(sectors, hermesSectors(models, discs, priced, intel, res.Scores[rank.Code].ByModel)...)
@@ -210,34 +207,23 @@ func catalogScores(models []discounts.Model, value func(discounts.Model) float64
 	return out
 }
 
-// buildIntelSectors creates the strongest-discount and halflight-free preset result
-// when intelligence scores are available. Returns the strongest-discount sectors first
-// (for Telegram) and free-tier sectors second (for presets only).
-func buildIntelSectors(models []discounts.Model, discs []discounts.Discount, freeIDs []string, intel map[string]float64, intelOK bool) (sdSectors, freeSectors []rank.SectorResult) {
+// buildIntelSectors creates the strongest-discount preset results when
+// intelligence scores are available. Returns the strongest-discount sectors
+// (for Telegram and for presets).
+func buildIntelSectors(models []discounts.Model, discs []discounts.Discount, intel map[string]float64, intelOK bool) []rank.SectorResult {
 	if !intelOK {
-		return nil, nil
-	}
-	sd := rank.SelectStrongestDiscount(models, discs, intel)
-	if len(sd.Rows) > 0 {
-		sdSectors = []rank.SectorResult{
-			sd,
-			{Sector: rank.StrongestDiscountVolition, Rows: sd.Rows},
-			{Sector: rank.StrongestDiscountInlandEmpire, Rows: sd.Rows},
-			{Sector: rank.StrongestDiscountShivers, Rows: sd.Rows},
-		}
-	}
-	freeSectors = buildFreeDiscoSectors(freeIDs, models, intel)
-	return sdSectors, freeSectors
-}
-
-// buildFreeDiscoSectors creates the halflight-free preset result from the
-// top 3 free models ranked by the catalog's AA Intelligence Index.
-func buildFreeDiscoSectors(freeIDs []string, models []discounts.Model, intel map[string]float64) []rank.SectorResult {
-	base := rank.SelectFreeDisco(freeIDs, models, intel)
-	if len(base.Rows) == 0 {
 		return nil
 	}
-	return []rank.SectorResult{base}
+	sd := rank.SelectStrongestDiscount(models, discs, intel)
+	if len(sd.Rows) == 0 {
+		return nil
+	}
+	return []rank.SectorResult{
+		sd,
+		{Sector: rank.StrongestDiscountVolition, Rows: sd.Rows},
+		{Sector: rank.StrongestDiscountInlandEmpire, Rows: sd.Rows},
+		{Sector: rank.StrongestDiscountShivers, Rows: sd.Rows},
+	}
 }
 
 // rowIDs lists the rows' model ids, for logs.

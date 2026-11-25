@@ -141,7 +141,7 @@ deepest discount first. `strongest-discount-half-light` routes to the top-3 stro
 prompt with reasoning effort high and verbosity low, and adds sampling settings
 (temperature 1.0, top_p 0.95, min_p 0.05, frequency_penalty 0,
 presence_penalty 0.1, max_tokens 65536); the other strongest-discount-*
-presets share them, and `halflight-free` too with max_tokens 16384. Hermes'
+presets share them. Hermes'
 main model sends no max_tokens, so 65536 must fit long tool calls (file
 writes); the pinned endpoints must allow it (`max_completion_tokens`). Frequency penalty stays 0 and temperature
 at 1: higher values (previously 1.15 / 0.4) penalize every common token over a
@@ -152,7 +152,7 @@ states that the persona shapes tone only.
 Unscored models are skipped; if none of a category's models scored, that
 preset is left untouched.
 
-Free presets (`admech-code-free`, `halflight-free`) skip `:free` endpoints
+Free presets (`admech-code-free`) skip `:free` endpoints
 restricted to agentic harnesses, which fail in the OpenRouter web chat. The
 API exposes no flag for this; the denylist `harnessOnly` in
 `internal/rank/rank.go` is curated from each model page's warning

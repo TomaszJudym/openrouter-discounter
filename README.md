@@ -136,8 +136,13 @@ With `OPENROUTER_MANAGEMENT_KEY` set, each run also repoints the OpenRouter pres
 composite ranking as the report (weights.go), scored on
 the category's score. `expensive-long` routes the 3 strongest discounted
 thinking models (catalog AA Intelligence Index, no price ceilings), ordered
-deepest discount first. `strongest-discount-half-light` routes to the top-3 strongest-thinking
-(catalog AA Intelligence Index) discounted chat models, carries the HALF-LIGHT persona
+deepest discount first. `strongest-discount-half-light` routes to the top-3
+discounted chat models with a catalog AA Intelligence Index, ranked by the
+same composite equation at the persona pair — price 80 / quality 20
+(`personaPricePercent` / `personaPerformancePercent` in weights.go); the
+global pair stays 50/50 for the report, `expensive-long`, admech-* and
+hermes-*. All four Disco Elysium persona presets (strongest-discount-*) share
+that top-3; `auto-shivers` is not managed by this repo. It carries the HALF-LIGHT persona
 prompt with reasoning effort high and verbosity low, and adds sampling settings
 (temperature 1.0, top_p 0.95, min_p 0.05, frequency_penalty 0,
 presence_penalty 0.1, max_tokens 65536); the other strongest-discount-*

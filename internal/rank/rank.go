@@ -191,8 +191,9 @@ func SelectExpensiveLong(models []discounts.Model, discs []discounts.Discount) S
 // discounted rows whose model satisfies ChatText() and ToolCalling() and whose
 // id does not end in :free or :batch, re-picked for the persona Need (a
 // tool-capable endpoint within the price ceilings). Only ids with a
-// positive thinking score are included. Order is strongest (highest score)
-// to weakest, stable.
+// positive thinking score are included. Order is the persona composite
+// (price 80 / performance 20, see weights.go) descending, then score
+// descending, stable.
 func SelectStrongestDiscount(models []discounts.Model, discs []discounts.Discount, thinking map[string]float64) SectorResult {
 	if len(thinking) == 0 {
 		return SectorResult{Sector: StrongestDiscountHalflight}
@@ -225,7 +226,12 @@ func SelectStrongestDiscount(models []discounts.Model, discs []discounts.Discoun
 	if len(rows) == 0 {
 		return SectorResult{Sector: StrongestDiscountHalflight}
 	}
-	slices.SortStableFunc(rows, byScoreDesc)
+	slices.SortStableFunc(rows, func(a, b Row) int {
+		if c := cmp.Compare(personaComposite(b), personaComposite(a)); c != 0 {
+			return c
+		}
+		return byScoreDesc(a, b)
+	})
 	return SectorResult{Sector: StrongestDiscountHalflight, Rows: Pinnable(rows, 3)}
 }
 
@@ -433,6 +439,15 @@ func byPct(a, b Row) int { return cmp.Compare(a.Pct, b.Pct) }
 // composite is the 0-100 ranking value for a scored row: benchmark weighted
 // by scoreWeight, discount by priceWeight (see weights.go).
 func composite(r Row) float64 {
+	return compositeWith(r, scoreWeight, priceWeight)
+}
+
+// personaComposite is composite under the persona pair (see weights.go).
+func personaComposite(r Row) float64 {
+	return compositeWith(r, personaScoreWeight, personaPriceWeight)
+}
+
+func compositeWith(r Row, scoreWeight, priceWeight float64) float64 {
 	return scoreWeight*r.Score + priceWeight*(-r.Pct)
 }
 

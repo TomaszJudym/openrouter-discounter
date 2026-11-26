@@ -8,11 +8,22 @@ const (
 	performancePercent = 50
 )
 
-// scoreWeight and priceWeight are the composite factors (0-1); vars only so
-// tests can pin them (see TestMain).
+// Persona composite weights in percent, summing to 100, for the Disco
+// Elysium persona presets (strongest-discount-*, see SelectStrongestDiscount):
+// same composite equation, price-heavy. Report sectors, expensive-long and
+// the admech-* / hermes-* presets keep the global pair above.
+const (
+	personaPricePercent       = 80
+	personaPerformancePercent = 20
+)
+
+// scoreWeight and priceWeight are the composite factors (0-1), the persona*
+// pair likewise; vars only so tests can pin them (see TestMain).
 var (
-	scoreWeight = performancePercent / 100.0
-	priceWeight = pricePercent / 100.0
+	scoreWeight        = performancePercent / 100.0
+	priceWeight        = pricePercent / 100.0
+	personaScoreWeight = personaPerformancePercent / 100.0
+	personaPriceWeight = personaPricePercent / 100.0
 )
 
 // Compile-time guards (negative array length fails the build): each weight
@@ -23,4 +34,9 @@ var (
 	_ [performancePercent]struct{}
 	_ [100 - performancePercent]struct{}
 	_ [1 - 2*((pricePercent+performancePercent-100)*(pricePercent+performancePercent-100))]struct{}
+	_ [personaPricePercent]struct{}
+	_ [100 - personaPricePercent]struct{}
+	_ [personaPerformancePercent]struct{}
+	_ [100 - personaPerformancePercent]struct{}
+	_ [1 - 2*((personaPricePercent+personaPerformancePercent-100)*(personaPricePercent+personaPerformancePercent-100))]struct{}
 )

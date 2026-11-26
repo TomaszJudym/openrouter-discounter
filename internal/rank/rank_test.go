@@ -437,6 +437,54 @@ func TestSelectStrongestDiscountCapsAtThree(t *testing.T) {
 	}
 }
 
+func TestSelectStrongestDiscountPersonaComposite(t *testing.T) {
+	models := []discounts.Model{
+		{ID: "a/smart", SupportedParameters: tools},
+		{ID: "b/cheap", SupportedParameters: tools},
+		{ID: "c/mid", SupportedParameters: tools},
+		{ID: "d/tie", SupportedParameters: tools},
+	}
+	discs := []discounts.Discount{
+		{ModelID: "a/smart", Pct: -10},
+		{ModelID: "b/cheap", Pct: -50},
+		{ModelID: "c/mid", Pct: -30},
+		{ModelID: "d/tie", Pct: -25},
+	}
+	// persona composite = 0.20×score + 0.80×(−Δ%):
+	// a = 18+8 = 26, b = 8+40 = 48, c = 12+24 = 36, d = 16+20 = 36 (ties c,
+	// higher score wins). Score-only order would be a, d, c.
+	thinking := map[string]float64{"a/smart": 90, "b/cheap": 40, "c/mid": 60, "d/tie": 80}
+	got := SelectStrongestDiscount(models, pin(discs), thinking)
+	if ids, want := idsOf(got.Rows), []string{"b/cheap", "d/tie", "c/mid"}; !slices.Equal(ids, want) {
+		t.Errorf("Rows = %v, want %v", ids, want)
+	}
+}
+
+func TestGlobalCompositeUnchanged(t *testing.T) {
+	if pricePercent != 50 || performancePercent != 50 {
+		t.Errorf("global pair = %d/%d, want 50/50", pricePercent, performancePercent)
+	}
+	if personaPricePercent != 80 || personaPerformancePercent != 20 {
+		t.Errorf("persona pair = %d/%d, want 80/20", personaPricePercent, personaPerformancePercent)
+	}
+	// report sectors, admech-* (via Rank) and hermes-* byDiscount roles use
+	// composite: the global pair, never the persona pair.
+	r := Row{Score: 90, Pct: -10, Scored: true}
+	if got, want := composite(r), scoreWeight*90+priceWeight*10; got != want {
+		t.Errorf("composite = %v, want %v (global pair)", got, want)
+	}
+	if got := roleValue(HermesReview, byDiscount, r, 0); got != composite(r) {
+		t.Errorf("hermes byDiscount roleValue = %v, want composite %v", got, composite(r))
+	}
+	// global 75/25 (pinned): a = 67.5+2.5 = 70, b = 30+12.5 = 42.5 → a first;
+	// the persona pair would put b first (26 vs 48).
+	p := fakeProvider{scores: map[Sector]map[string]float64{Math: {"a/smart": 90, "b/cheap": 40}}}
+	ds := []discounts.Discount{{ModelID: "b/cheap", Pct: -50}, {ModelID: "a/smart", Pct: -10}}
+	if ids, want := idsOf(Rank(t.Context(), ds, nil, p).Sectors[0].Rows), []string{"a/smart", "b/cheap"}; !slices.Equal(ids, want) {
+		t.Errorf("Math rows = %v, want %v (global composite)", ids, want)
+	}
+}
+
 func TestSelectStrongestDiscountEmptyThinking(t *testing.T) {
 	models := []discounts.Model{{ID: "a/m", Architecture: discounts.Architecture{}}}
 	discs := []discounts.Discount{{ModelID: "a/m"}}

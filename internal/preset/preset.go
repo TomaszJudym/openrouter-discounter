@@ -119,12 +119,20 @@ var specs = map[rank.Sector]presetSpec{
 	rank.StrongestDiscountVolition:     persona(volitionPrompt, rank.PersonaMaxTokens),
 	rank.StrongestDiscountInlandEmpire: persona(inlandempirePrompt, rank.PersonaMaxTokens),
 	rank.StrongestDiscountShivers:      persona(shiversPrompt, rank.PersonaMaxTokens),
-	// Task presets: none talks to the user, so none carries a prompt.
+	// Hermes presets route agents' own models: none talks to the user, so
+	// none carries a prompt.
 	rank.HermesDelegate: {hermes: true, effort: "medium"},
 	rank.HermesReview:   {hermes: true, effort: "medium"},
 	rank.HermesCompress: {hermes: true, effort: "low"},
 	rank.HermesVision:   {hermes: true, effort: "none"},
 	rank.HermesLight:    {hermes: true, effort: "none"},
+
+	admechOracle:     admechSpec(oraclePrompt, "high"),
+	admechReviewer:   admechSpec(reviewerPrompt, "high"),
+	admechResearcher: admechSpec(researcherPrompt, "medium"),
+	admechAuditor:    admechSpec(auditorPrompt, "medium"),
+	admechDelegate:   admechSpec(delegatePrompt, "low"),
+	admechScout:      admechSpec(scoutPrompt, "low"),
 }
 
 // effortFor is the spec's reasoning effort, defaulting to reasoningEffort.
@@ -152,7 +160,33 @@ var Slugs = map[rank.Sector]string{
 	rank.HermesCompress:                "hermes-compress",
 	rank.HermesReview:                  "hermes-review",
 	rank.HermesLight:                   "hermes-light",
+
+	admechOracle:     "admech-code-oracle",
+	admechReviewer:   "admech-code-reviewer",
+	admechResearcher: "admech-code-researcher",
+	admechAuditor:    "admech-code-auditor",
+	admechDelegate:   "admech-code-delegate",
+	admechScout:      "admech-code-scout",
 }
+
+// ManagedSlugs are the preset slugs the update path may write: the admech
+// presets (admech-code worker plus the six admech-code role presets).
+// Everything else in Slugs stays for dbproxy compatibility but is not
+// updated by the run.
+func ManagedSlugs() []string {
+	return []string{
+		"admech-code",
+		"admech-code-oracle",
+		"admech-code-reviewer",
+		"admech-code-researcher",
+		"admech-code-auditor",
+		"admech-code-delegate",
+		"admech-code-scout",
+	}
+}
+
+// managedSlug reports whether the update path may write to slug.
+func managedSlug(slug string) bool { return slices.Contains(ManagedSlugs(), slug) }
 
 // TopN is how many models each preset routes.
 const TopN = 3
@@ -202,6 +236,21 @@ type Client struct {
 // New builds a client authenticating with the OpenRouter API key.
 func New(hc *http.Client, key string) *Client {
 	return &Client{hc: hc, key: key, base: "https://openrouter.ai/api/v1"}
+}
+
+// UpdateManaged ensures the sector's preset lists the top-3 scored models.
+// Only admech presets (ManagedSlugs) are written; a legacy preset such as
+// hermes-delegate or expensive-long is refused with an error so the run can
+// never change a preset outside ManagedSlugs.
+func (c *Client) UpdateManaged(ctx context.Context, sr rank.SectorResult) (bool, error) {
+	slug, ok := Slugs[sr.Sector]
+	if !ok {
+		return false, fmt.Errorf("no preset slug for sector %q", sr.Sector)
+	}
+	if !managedSlug(slug) {
+		return false, fmt.Errorf("preset %q is not managed: update refused (managed: %v)", slug, ManagedSlugs())
+	}
+	return c.Update(ctx, sr)
 }
 
 // Update ensures the sector's preset lists the top-3 scored models with the

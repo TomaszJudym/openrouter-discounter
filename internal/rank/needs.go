@@ -29,6 +29,12 @@ var (
 	visionWorkload = discounts.Workload{Input: 5_000, Output: 500}
 	// lightWorkload is a short one-shot (titles, approvals) without reasoning.
 	lightWorkload = discounts.Workload{Input: 2_000, Output: 200}
+	// oracleWorkload is a hard, heavily reasoned implementation task.
+	oracleWorkload = discounts.Workload{Input: 40_000, Output: 4_000, CacheHit: 0.6, Reasoning: 0.7}
+	// researcherWorkload reads a long, mostly cached spec before drafting.
+	researcherWorkload = discounts.Workload{Input: 40_000, Output: 2_000, CacheHit: 0.8, Reasoning: 0.5}
+	// auditorWorkload walks a full, largely uncached session log.
+	auditorWorkload = discounts.Workload{Input: 200_000, Output: 4_000, CacheHit: 0.1, Reasoning: 0.1}
 )
 
 // needs maps the preset sectors that re-pick endpoints; the others (the
@@ -43,6 +49,12 @@ var needs = map[Sector]Need{
 	HermesCompress:             {discounts.Require{MinContext: compressMinCtx, Capped: true}, compressWorkload},
 	HermesVision:               {discounts.Require{Vision: true, Capped: true}, visionWorkload},
 	HermesLight:                {discounts.Require{Capped: true}, lightWorkload},
+	AdmechOracle:               {discounts.Require{Tools: true, Capped: true, MinOutput: PersonaMaxTokens}, oracleWorkload},
+	AdmechReviewer:             {discounts.Require{Tools: true, Capped: true}, reviewWorkload},
+	AdmechResearcher:           {discounts.Require{Capped: true, MinContext: researcherMinCtx}, researcherWorkload},
+	AdmechAuditor:              {discounts.Require{Capped: true, MinContext: auditorMinCtx}, auditorWorkload},
+	AdmechDelegate:             {discounts.Require{Tools: true, Capped: true}, delegateWorkload},
+	AdmechScout:                {discounts.Require{Capped: true}, lightWorkload},
 }
 
 // Need is the sector's endpoint requirement and workload.

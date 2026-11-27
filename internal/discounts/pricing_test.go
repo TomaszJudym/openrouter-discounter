@@ -16,20 +16,20 @@ func TestOverrideActiveAtWindows(t *testing.T) {
 		want bool
 	}{
 		// minimax-style window wrapping midnight, no days
-		{"wrap evening", Override{Start: new(1500), End: new(100)}, friday.Add(22 * time.Hour), true},
-		{"wrap after midnight", Override{Start: new(1500), End: new(100)}, friday.Add(30 * time.Minute), true},
-		{"wrap closed", Override{Start: new(1500), End: new(100)}, friday.Add(10 * time.Hour), false},
-		{"wrap end exclusive", Override{Start: new(1500), End: new(100)}, friday.Add(time.Hour), false},
+		{"wrap evening", Override{Start: hhmm(1500), End: hhmm(100)}, friday.Add(22 * time.Hour), true},
+		{"wrap after midnight", Override{Start: hhmm(1500), End: hhmm(100)}, friday.Add(30 * time.Minute), true},
+		{"wrap closed", Override{Start: hhmm(1500), End: hhmm(100)}, friday.Add(10 * time.Hour), false},
+		{"wrap end exclusive", Override{Start: hhmm(1500), End: hhmm(100)}, friday.Add(time.Hour), false},
 		// utc_end 0 means midnight, not a wrap
-		{"end zero open", Override{Start: new(1600), End: new(0)}, friday.Add(23*time.Hour + 59*time.Minute), true},
-		{"end zero closed", Override{Start: new(1600), End: new(0)}, friday, false},
+		{"end zero open", Override{Start: hhmm(1600), End: hhmm(0)}, friday.Add(23*time.Hour + 59*time.Minute), true},
+		{"end zero closed", Override{Start: hhmm(1600), End: hhmm(0)}, friday, false},
 		// the after-midnight part of a wrapped window belongs to the previous day
-		{"days wrap same day", Override{Days: []string{"friday"}, Start: new(2200), End: new(200)}, friday.Add(23 * time.Hour), true},
-		{"days wrap next day", Override{Days: []string{"friday"}, Start: new(2200), End: new(200)}, friday.Add(25 * time.Hour), true},
-		{"days wrap previous day", Override{Days: []string{"friday"}, Start: new(2200), End: new(200)}, friday.Add(time.Hour), false},
+		{"days wrap same day", Override{Days: []string{"friday"}, Start: hhmm(2200), End: hhmm(200)}, friday.Add(23 * time.Hour), true},
+		{"days wrap next day", Override{Days: []string{"friday"}, Start: hhmm(2200), End: hhmm(200)}, friday.Add(25 * time.Hour), true},
+		{"days wrap previous day", Override{Days: []string{"friday"}, Start: hhmm(2200), End: hhmm(200)}, friday.Add(time.Hour), false},
 		{"days only", Override{Days: []string{"Friday"}}, friday.Add(12 * time.Hour), true},
 		{"days only other day", Override{Days: []string{"saturday"}}, friday.Add(12 * time.Hour), false},
-		{"non-UTC clock", Override{Start: new(1500), End: new(100)}, friday.Add(22 * time.Hour).In(time.FixedZone("JST", 9*3600)), true},
+		{"non-UTC clock", Override{Start: hhmm(1500), End: hhmm(100)}, friday.Add(22 * time.Hour).In(time.FixedZone("JST", 9*3600)), true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -41,7 +41,7 @@ func TestOverrideActiveAtWindows(t *testing.T) {
 }
 
 func TestOverrideLabel(t *testing.T) {
-	if got := (Override{Start: new(1500), End: new(100)}).label(); got != "15:00–01:00 UTC" {
+	if got := (Override{Start: hhmm(1500), End: hhmm(100)}).label(); got != "15:00–01:00 UTC" {
 		t.Errorf("label() = %q, want %q", got, "15:00–01:00 UTC")
 	}
 	if got := (Override{Days: []string{"saturday"}}).label(); got != "saturday" {
@@ -114,8 +114,8 @@ func TestEndpointWindowDiscount(t *testing.T) {
 	window := Endpoint{Provider: "Minimax", Pricing: Pricing{
 		Prompt: "0.00000015", Completion: "0.0000006", CacheRead: "0.000000015",
 		Overrides: []Override{
-			{Start: new(1500), End: new(100), Prompt: "0.000000075", Completion: "0.0000003", CacheRead: "0.0000000075"},
-			{Start: new(100), End: new(1500), Prompt: "0.00000015", Completion: "0.0000006", CacheRead: "0.000000015"},
+			{Start: hhmm(1500), End: hhmm(100), Prompt: "0.000000075", Completion: "0.0000003", CacheRead: "0.0000000075"},
+			{Start: hhmm(100), End: hhmm(1500), Prompt: "0.00000015", Completion: "0.0000006", CacheRead: "0.000000015"},
 		},
 	}}
 	byID := map[string][]Endpoint{"minimax/m": {window, ep("Other", "0.00000013", "0.00000052", 0)}}

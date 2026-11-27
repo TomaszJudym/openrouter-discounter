@@ -5,7 +5,7 @@ Daily Telegram report of discounted OpenRouter models, ranked per category
 scores. Runs on GitHub Actions daily at 07:00 JST; presets are also
 repointed every 2 hours in between (no report).
 
-```
+```text
 tracker (GitHub Actions, daily 07:00 JST; presets-only every 2 h)
   │
   │ GET  openrouter.ai/api/v1/models                         ← catalog, base prices, AA Intelligence Index
@@ -13,6 +13,7 @@ tracker (GitHub Actions, daily 07:00 JST; presets-only every 2 h)
   │ GET  epoch.ai/data/benchmark_data.zip                    ← math, code scores
   │ GET  artificialanalysis.ai/api/v2/language/models/free   ← finance score
   │ GET  openrouter.ai/api/frontend/v1/rankings/models       ← popularity (long-context)
+  │ GET  api.darkbloom.dev/v1/models                         ← Darkbloom-direct prices (optional)
   ▼
 rank top 10 per category (math, long-context, finance, code)
   │
@@ -22,6 +23,9 @@ presets  ◄── POST openrouter.ai/api/v1/presets/{slug}/chat/completions
 ```
 
 ## Setup
+
+Scheduled workflows are disabled by default on forks — use your own repo,
+not a fork, or re-enable the daily workflow under Actions after forking.
 
 1. Create a bot with @BotFather, add it to your channel as admin.
 2. Enable Actions on this repo, then add secrets (Settings → Secrets and
@@ -38,14 +42,19 @@ presets  ◄── POST openrouter.ai/api/v1/presets/{slug}/chat/completions
      the `admech-math` / `admech-long` / `admech-finance` / `admech-code`
      / `admech-code-free` / `expensive-long` presets with each category's
      top 3.
+   - `DARKBLOOM_API_KEY` — key from console.darkbloom.dev. Optional; adds
+     the Darkbloom-direct price table to the report (see Darkbloom below).
 3. Actions → daily → Run workflow.
+4. Expect the report around 07:00 JST, ±15 min: GitHub schedules cron runs
+   under load, so the delivery can be delayed but never skipped; the
+   fixed-UTC crons are exact in JST (no DST).
 
 ## Scoring
 
 Each category has one score per model, 0–100:
 
 | category | source | scale |
-|---|---|---|
+| --- | --- | --- |
 | math | Epoch AI — OTIS Mock AIME (`mean_score`) | fraction × 100 |
 | long-context | OpenRouter popularity — tokens over the rankings window | log10, min–max |
 | finance | Artificial Analysis — Finance & Accounting index (free tier) | as published |
@@ -53,7 +62,7 @@ Each category has one score per model, 0–100:
 
 Ranking:
 
-```
+```text
 final = performance% × score + price% × (−Δ%)
 ```
 
@@ -93,7 +102,7 @@ Coding and Agentic indexes are discontinued, and its per-benchmark fields
 If a category's source fails, that category ranks by discount only and the
 report shows, under its header:
 
-```
+```text
 ⚠️ scored only by price — Epoch AI error: status 503: …
 ```
 
@@ -118,7 +127,7 @@ preset's request shape. Tool support (`tools` listed and `tool_choice: auto`
 not refused) and context length are checked per endpoint, not per model.
 
 | preset | endpoint must | request shape (in / cached / out / reasoning) |
-|---|---|---|
+| --- | --- | --- |
 | admech-* (report tables) | — | 30k / 80% / 1.5k / 50% |
 | expensive-long | fit 304k tokens | 300k / 80% / 4k / 50% |
 | strongest-discount-* | call tools | 8k / 70% / 3k / 60% |
@@ -140,7 +149,7 @@ deepest discount first. `strongest-discount-half-light` routes to the top-3
 discounted chat models with a catalog AA Intelligence Index, ranked by the
 same composite equation at the persona pair — price 80 / quality 20
 (`personaPricePercent` / `personaPerformancePercent` in weights.go); the
-global pair stays 50/50 for the report, `expensive-long`, admech-* and
+global pair stays 50/50 for the report, `expensive-long`, `admech-*` and
 hermes-*. All four Disco Elysium persona presets (strongest-discount-*) share
 that top-3; `auto-shivers` is not managed by this repo. It carries the HALF-LIGHT persona
 prompt with reasoning effort high and verbosity low, and adds sampling settings
@@ -190,7 +199,7 @@ calls need default temperature). The 3 listed models double as OpenRouter
 fallback order.
 
 | preset | Hermes slot | filter | quality | effort |
-|---|---|---|---|---|
+| --- | --- | --- | --- | --- |
 | `hermes-delegate` | `delegation.model` | tools | Epoch WebDev Arena (≥ 3 scored), else II | medium |
 | `hermes-vision` | `auxiliary.vision` | image input | II | none |
 | `hermes-compress` | `auxiliary.compression` | ctx ≥ 1M | II | low |
@@ -239,6 +248,57 @@ auxiliary:
   approval:          { provider: openrouter, model: "@preset/hermes-light" }
   goal_judge:        { provider: openrouter, model: "@preset/hermes-light" }
 ```
+
+## Darkbloom
+
+[Darkbloom](https://docs.darkbloom.dev) (prepaid credits, OpenAI-compatible,
+shared Apple-silicon Macs) is priced twice:
+
+- **On OpenRouter** — its `darkbloom/*` endpoints are ordinary OpenRouter
+  offers, billed to OpenRouter credits, pinned in the OpenRouter presets.
+- **Direct** — `api.darkbloom.dev`, billed to Darkbloom credits. One
+  `GET /v1/models` gives prices, context, max output, image input, tool
+  support and live capacity; models no Mac can take right now are skipped.
+  Each model is mapped to its OpenRouter id (Hugging Face id, then name
+  with build suffixes like `-4bit`/`-mtp` dropped) and uses that model's
+  benchmark scores.
+
+Darkbloom lists no discounts, so a Darkbloom offer counts as discounted when
+it undercuts every other provider of the model: `was` is the cheapest other
+provider. Its fp4/int4 endpoints are exempt from the ≤4-bit filter.
+
+Every preset is selected twice over the same scores: the OpenRouter side
+(top 3 → the OpenRouter preset, as before) and the Darkbloom-direct side
+(top 3, by the same rule). Darkbloom stores no presets and has no model
+fallback (`models` is ignored; one `model` per request), so the direct side
+is served by a local proxy:
+
+```sh
+DARKBLOOM_API_KEY=sk-db-… AA_API_KEY=… go run ./cmd/dbproxy   # 127.0.0.1:8787
+```
+
+Point the client's OpenAI base URL at `http://127.0.0.1:8787/v1`, keep the
+model names `@preset/<slug>` and your OpenRouter key as the API key (it is
+forwarded to OpenRouter only). For Hermes Agent, use a custom provider
+with that `base_url` in place of `provider: openrouter`. Per request:
+
+- The side whose #1 costs less (blended per Mtok under the preset's
+  workload) goes first; a tie goes to Darkbloom (prepaid, no OpenRouter fee).
+- Darkbloom: the proxy injects the preset's system prompt (merged before the
+  client's own system message) and parameters the client did not send
+  (`min_p` dropped: Darkbloom does not take it), passes `tools` and messages
+  untouched, and tries the 3 models in order.
+- OpenRouter: `@preset/<slug>` is forwarded unchanged; OpenRouter applies
+  the preset and its own 3-model fallback.
+- Any error before the response starts (non-2xx, error object, SSE error
+  event, no response headers within 10 min) moves to the next model, then to
+  the other side; nothing is retried once output has started. The
+  `X-Dbproxy-Route` response header names the backend used.
+
+Picks are recomputed at start (about a minute; until then every request goes
+to OpenRouter) and every 2 h, held in memory only. Tool calls, streamed tool
+calls and tool results work on Darkbloom (verified 2026-11-27). The
+OpenRouter web chat sees only the OpenRouter side.
 
 ## Development
 

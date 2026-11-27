@@ -41,7 +41,7 @@ var needs = map[Sector]Need{
 	HermesDelegate:             {discounts.Require{Tools: true, Capped: true}, delegateWorkload},
 	HermesReview:               {discounts.Require{Tools: true, Capped: true}, reviewWorkload},
 	HermesCompress:             {discounts.Require{MinContext: compressMinCtx, Capped: true}, compressWorkload},
-	HermesVision:               {discounts.Require{Capped: true}, visionWorkload},
+	HermesVision:               {discounts.Require{Vision: true, Capped: true}, visionWorkload},
 	HermesLight:                {discounts.Require{Capped: true}, lightWorkload},
 }
 

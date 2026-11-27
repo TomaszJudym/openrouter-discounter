@@ -29,6 +29,15 @@ func at(t *testing.T, hh, mm int) time.Time {
 	return thursday(t).Add(time.Duration(hh)*time.Hour + time.Duration(mm)*time.Minute)
 }
 
+// hhmm returns a pointer to an HHMM window bound (the JSON fields are *int).
+// new(int)+assign rather than new(v): pi-lens only parses classic new(T)
+// and flags the new(expr) form as "1500 is not a type".
+func hhmm(v int) *int {
+	p := new(int)
+	*p = v
+	return p
+}
+
 // ep builds an endpoint with flat pricing and a provider discount.
 func ep(provider, prompt, completion string, discount float64) Endpoint {
 	return Endpoint{Provider: provider, Pricing: Pricing{Prompt: prompt, Completion: completion, Discount: discount}}
@@ -441,7 +450,7 @@ func TestShortHorizonPricesWindowByUse(t *testing.T) {
 	// full -50%, one outside it sees no discount (a day dilutes both)
 	window := Endpoint{Provider: "Minimax", Tag: "minimax", Pricing: Pricing{
 		Prompt: "0.00000015", Completion: "0.0000006",
-		Overrides: []Override{{Start: new(1500), End: new(100), Prompt: "0.000000075", Completion: "0.0000003"}},
+		Overrides: []Override{{Start: hhmm(1500), End: hhmm(100), Prompt: "0.000000075", Completion: "0.0000003"}},
 	}}
 	byID := map[string][]Endpoint{"minimax/m": {window}}
 	in := time.Date(2026, 11, 17, 16, 0, 0, 0, time.UTC)

@@ -39,7 +39,8 @@ var priceNote = fmt.Sprintf("prices: %gh-avg blended $/Mtok, ", discounts.Horizo
 var jst = time.FixedZone("JST", 9*3600)
 
 // Messages renders one HTML message for the ranking, or one per sector when
-// the combined message would exceed the per-message limit.
+// the combined message would exceed the per-message limit. The limit counts
+// runes, not bytes, so multibyte content cannot split a message early.
 func Messages(res rank.Result, now time.Time) []string {
 	header := "🪙 OpenRouter discounts — " + now.In(jst).Format(headerTimeLayout) +
 		"\n" + priceNote
@@ -48,12 +49,13 @@ func Messages(res rank.Result, now time.Time) []string {
 	b.WriteString(header)
 	for _, sr := range res.Sectors {
 		block := sectorBlock(sr)
-		if b.Len()+2+len(block) > messageLimit {
+		if utf8.RuneCountInString(b.String())+2+utf8.RuneCountInString(block) > messageLimit {
 			msgs = append(msgs, b.String())
 			b.Reset()
 			b.WriteString(header)
 		}
-		b.WriteString("\n\n" + block)
+		b.WriteString("\n\n")
+		b.WriteString(block)
 	}
 	msgs = append(msgs, b.String())
 	return msgs
@@ -62,7 +64,8 @@ func Messages(res rank.Result, now time.Time) []string {
 // NoDiscounts renders the short message for a day with no active discounts.
 func NoDiscounts(now time.Time) string {
 	var b strings.Builder
-	b.WriteString("🪙 OpenRouter discounts — " + now.In(jst).Format(headerTimeLayout))
+	b.WriteString("🪙 OpenRouter discounts — ")
+	b.WriteString(now.In(jst).Format(headerTimeLayout))
 	b.WriteString("\n\nno discounts today.")
 	return b.String()
 }
@@ -71,7 +74,8 @@ func sectorBlock(sr rank.SectorResult) string {
 	var b strings.Builder
 	b.WriteString(htmlEscaper.Replace(sr.Sector.Label()))
 	if sr.Err != "" {
-		b.WriteString("\n" + notice(sr.Source, sr.Err))
+		b.WriteString("\n")
+		b.WriteString(notice(sr.Source, sr.Err))
 	}
 	b.WriteString("\n<pre>\n")
 	b.WriteString(table(sr))
@@ -88,18 +92,25 @@ func notice(source, errText string) string {
 	return noticePrefix + htmlEscaper.Replace(source) + " error: " + htmlEscaper.Replace(errText)
 }
 
-// cell is one fixed-width column of a table line.
+// cell is one fixed-width column of a table line. When escape is set, the
+// text is HTML-escaped only after padding, so entities like &amp; (1 visible
+// rune, 5 bytes) never shift the column; padding counts raw runes.
 type cell struct {
-	text  string
-	width int
-	right bool
+	text   string
+	width  int
+	right  bool
+	escape bool
 }
 
 // line renders cells separated by one space, trimming trailing padding.
 func line(cells ...cell) string {
 	parts := make([]string, len(cells))
 	for i, c := range cells {
-		parts[i] = pad(c.text, c.width, c.right)
+		s := pad(c.text, c.width, c.right)
+		if c.escape {
+			s = htmlEscaper.Replace(s)
+		}
+		parts[i] = s
 	}
 	return strings.TrimRight(strings.Join(parts, " "), " ")
 }
@@ -128,11 +139,11 @@ func table(sr rank.SectorResult) string {
 	for i, r := range sr.Rows {
 		cells := []cell{
 			{text: strconv.Itoa(i + 1), width: 2},
-			{text: htmlEscaper.Replace(truncateRunes(r.ModelID, widthModel)), width: widthModel},
+			{text: truncateRunes(r.ModelID, widthModel), width: widthModel, escape: true},
 		}
 		if withPrice {
 			cells = append(cells,
-				cell{text: htmlEscaper.Replace(truncateRunes(provider(r.Provider), widthProv)), width: widthProv},
+				cell{text: truncateRunes(provider(r.Provider), widthProv), width: widthProv, escape: true},
 				cell{text: pricePair(r.Was, r.Price), width: widthPair, right: true},
 				cell{text: fmt.Sprintf("%.0f", r.Pct), width: widthPct, right: true})
 		}

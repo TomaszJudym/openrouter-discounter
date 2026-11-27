@@ -1,0 +1,584 @@
+{
+  "object": "list",
+  "data": [
+    {
+      "id": "gemma-4-26b",
+      "object": "model",
+      "owned_by": "eigeninference",
+      "hugging_face_id": "gemma-4-26b-qat-4bit",
+      "input_modalities": [
+        "text",
+        "image",
+        "video"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "context_length": 262144,
+      "max_output_length": 235929,
+      "pricing": {
+        "prompt": "0.00000005",
+        "completion": "0.00000019",
+        "image": "0",
+        "request": "0",
+        "input_cache_read": "0.0000000125"
+      },
+      "supported_sampling_parameters": [
+        "temperature",
+        "top_p",
+        "top_k",
+        "frequency_penalty",
+        "presence_penalty",
+        "repetition_penalty",
+        "stop",
+        "seed",
+        "max_tokens"
+      ],
+      "supported_features": [
+        "json_mode",
+        "reasoning",
+        "tools"
+      ],
+      "metadata": {
+        "can_accept": true,
+        "routable_providers": 550,
+        "warm_providers": 504
+      }
+    },
+    {
+      "id": "nvidia-nemotron-3.5-super",
+      "object": "model",
+      "owned_by": "eigeninference",
+      "hugging_face_id": "nvidia/NVIDIA-Nemotron-3.5-Super-VL",
+      "input_modalities": [
+        "text",
+        "image",
+        "video"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "context_length": 262144,
+      "max_output_length": 131072,
+      "pricing": {
+        "prompt": "0.00000006",
+        "completion": "0.00000035",
+        "image": "0",
+        "request": "0",
+        "input_cache_read": "0.00000001"
+      },
+      "supported_sampling_parameters": [
+        "temperature",
+        "top_p",
+        "top_k",
+        "frequency_penalty",
+        "presence_penalty",
+        "repetition_penalty",
+        "stop",
+        "seed",
+        "max_tokens"
+      ],
+      "supported_features": [
+        "json_mode",
+        "logprobs",
+        "reasoning",
+        "structured_outputs",
+        "tools"
+      ],
+      "metadata": {
+        "can_accept": true,
+        "routable_providers": 55,
+        "warm_providers": 25
+      }
+    },
+    {
+      "id": "glm-5.3-flash",
+      "object": "model",
+      "owned_by": "eigeninference",
+      "hugging_face_id": "zai-org/GLM-5.3-Flash",
+      "input_modalities": [
+        "text",
+        "image",
+        "video"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "context_length": 262144,
+      "max_output_length": 65536,
+      "pricing": {
+        "prompt": "0.000000065",
+        "completion": "0.00000018",
+        "image": "0",
+        "request": "0",
+        "input_cache_read": "0.000000012"
+      },
+      "supported_sampling_parameters": [
+        "temperature",
+        "top_p",
+        "top_k",
+        "frequency_penalty",
+        "presence_penalty",
+        "repetition_penalty",
+        "stop",
+        "seed",
+        "max_tokens"
+      ],
+      "supported_features": [
+        "logprobs",
+        "reasoning",
+        "tools"
+      ],
+      "metadata": {
+        "can_accept": true,
+        "routable_providers": 10,
+        "warm_providers": 6
+      }
+    },
+    {
+      "id": "Qwen3.5-9B",
+      "object": "model",
+      "owned_by": "eigeninference",
+      "hugging_face_id": "Qwen/Qwen3.5-9B",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "context_length": 262144,
+      "max_output_length": 65536,
+      "pricing": {
+        "prompt": "0.00000008",
+        "completion": "0.00000013",
+        "image": "0",
+        "request": "0",
+        "input_cache_read": "0.00000004"
+      },
+      "supported_sampling_parameters": [
+        "temperature",
+        "top_p",
+        "top_k",
+        "frequency_penalty",
+        "presence_penalty",
+        "repetition_penalty",
+        "stop",
+        "seed",
+        "max_tokens"
+      ],
+      "supported_features": [
+        "tools"
+      ],
+      "metadata": {
+        "can_accept": true,
+        "routable_providers": 261,
+        "warm_providers": 201
+      }
+    },
+    {
+      "id": "qwen3.6-35b-a3b-vl-mtp-mxfp8",
+      "object": "model",
+      "owned_by": "eigeninference",
+      "hugging_face_id": "Qwen/Qwen3.6-35B-A3B",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "context_length": 262144,
+      "max_output_length": 235929,
+      "pricing": {
+        "prompt": "0.00000005",
+        "completion": "0.0000007",
+        "image": "0",
+        "request": "0",
+        "input_cache_read": "0.000000025"
+      },
+      "supported_sampling_parameters": [
+        "temperature",
+        "top_p",
+        "top_k",
+        "frequency_penalty",
+        "presence_penalty",
+        "repetition_penalty",
+        "stop",
+        "seed",
+        "max_tokens"
+      ],
+      "supported_features": [
+        "tools"
+      ],
+      "metadata": {
+        "can_accept": true,
+        "routable_providers": 438,
+        "warm_providers": 201
+      }
+    },
+    {
+      "id": "EigenLabs/Qwen3.8-27B-4bit-mtp",
+      "object": "model",
+      "owned_by": "eigeninference",
+      "hugging_face_id": "Qwen/Qwen3.8-27B",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "context_length": 262144,
+      "max_output_length": 131072,
+      "pricing": {
+        "prompt": "0.000000035",
+        "completion": "0.0000015",
+        "image": "0",
+        "request": "0",
+        "input_cache_read": "0.0000000175"
+      },
+      "supported_sampling_parameters": [
+        "temperature",
+        "top_p",
+        "top_k",
+        "frequency_penalty",
+        "presence_penalty",
+        "repetition_penalty",
+        "stop",
+        "seed",
+        "max_tokens"
+      ],
+      "supported_features": [
+        "tools"
+      ],
+      "metadata": {
+        "can_accept": true,
+        "routable_providers": 147,
+        "warm_providers": 137
+      }
+    },
+    {
+      "id": "thinkingmachines/Inkling-2-Mini",
+      "object": "model",
+      "owned_by": "eigeninference",
+      "hugging_face_id": "thinkingmachines/Inkling-2-Mini",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "context_length": 524288,
+      "max_output_length": 65536,
+      "pricing": {
+        "prompt": "0.00000002625",
+        "completion": "0.000000105",
+        "image": "0",
+        "request": "0",
+        "input_cache_read": "0.000000013125"
+      },
+      "supported_sampling_parameters": [
+        "temperature",
+        "top_p",
+        "top_k",
+        "frequency_penalty",
+        "presence_penalty",
+        "repetition_penalty",
+        "stop",
+        "seed",
+        "max_tokens"
+      ],
+      "supported_features": [
+        "json_mode",
+        "reasoning",
+        "structured_outputs",
+        "tools"
+      ],
+      "metadata": {
+        "can_accept": true,
+        "routable_providers": 74,
+        "warm_providers": 36
+      }
+    },
+    {
+      "id": "ternary-bonsai-2-27b",
+      "object": "model",
+      "owned_by": "eigeninference",
+      "hugging_face_id": "prism-ml/Ternary-Bonsai-2-27B-gguf",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "context_length": 262144,
+      "max_output_length": 32768,
+      "pricing": {
+        "prompt": "0.000000075",
+        "completion": "0.0000005",
+        "image": "0",
+        "request": "0",
+        "input_cache_read": "0.0000000375"
+      },
+      "supported_sampling_parameters": [
+        "temperature",
+        "top_p",
+        "top_k",
+        "frequency_penalty",
+        "presence_penalty",
+        "repetition_penalty",
+        "stop",
+        "seed",
+        "max_tokens"
+      ],
+      "supported_features": [
+        "reasoning",
+        "tools"
+      ],
+      "metadata": {
+        "can_accept": true,
+        "routable_providers": 189,
+        "warm_providers": 53
+      }
+    },
+    {
+      "id": "gpt-oss-20b",
+      "object": "model",
+      "owned_by": "eigeninference",
+      "hugging_face_id": "gpt-oss-20b",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "context_length": 131072,
+      "max_output_length": 131072,
+      "pricing": {
+        "prompt": "0.0000000153",
+        "completion": "0.0000000765",
+        "image": "0",
+        "request": "0",
+        "input_cache_read": "0.00000000765"
+      },
+      "supported_sampling_parameters": [
+        "temperature",
+        "top_p",
+        "top_k",
+        "frequency_penalty",
+        "presence_penalty",
+        "repetition_penalty",
+        "stop",
+        "seed",
+        "max_tokens"
+      ],
+      "supported_features": null,
+      "metadata": {
+        "can_accept": true,
+        "routable_providers": 372,
+        "warm_providers": 275
+      }
+    },
+    {
+      "id": "nvidia-nemotron-3.5-lightning",
+      "object": "model",
+      "owned_by": "eigeninference",
+      "hugging_face_id": "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "context_length": 262144,
+      "max_output_length": 65536,
+      "pricing": {
+        "prompt": "0.00000002",
+        "completion": "0.000000096",
+        "image": "0",
+        "request": "0",
+        "input_cache_read": "0.00000001"
+      },
+      "supported_sampling_parameters": [
+        "temperature",
+        "top_p",
+        "top_k",
+        "frequency_penalty",
+        "presence_penalty",
+        "repetition_penalty",
+        "stop",
+        "seed",
+        "max_tokens"
+      ],
+      "supported_features": [
+        "reasoning",
+        "tools"
+      ],
+      "metadata": {
+        "can_accept": true,
+        "routable_providers": 152,
+        "warm_providers": 43
+      }
+    },
+    {
+      "id": "qwen3.5-35b-a3b",
+      "object": "model",
+      "owned_by": "eigeninference",
+      "hugging_face_id": "Qwen/Qwen3.5-35B-A3B",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "context_length": 262144,
+      "max_output_length": 131072,
+      "pricing": {
+        "prompt": "0.000000065",
+        "completion": "0.00000075",
+        "image": "0",
+        "request": "0",
+        "input_cache_read": "0.0000000325"
+      },
+      "supported_sampling_parameters": [
+        "temperature",
+        "top_p",
+        "top_k",
+        "frequency_penalty",
+        "presence_penalty",
+        "repetition_penalty",
+        "stop",
+        "seed",
+        "max_tokens"
+      ],
+      "supported_features": [
+        "tools"
+      ],
+      "metadata": {
+        "can_accept": true,
+        "routable_providers": 246,
+        "warm_providers": 102
+      }
+    },
+    {
+      "id": "EigenLabs/Ternary-Bonsai-2-9B-MLX-2bit",
+      "object": "model",
+      "owned_by": "eigeninference",
+      "hugging_face_id": "prism-ml/Ternary-Bonsai-2-9B-mlx-2bit",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "context_length": 262144,
+      "max_output_length": 65536,
+      "pricing": {
+        "prompt": "0.00000008",
+        "completion": "0.00000013",
+        "image": "0",
+        "request": "0",
+        "input_cache_read": "0.00000004"
+      },
+      "supported_sampling_parameters": [
+        "temperature",
+        "top_p",
+        "top_k",
+        "frequency_penalty",
+        "presence_penalty",
+        "repetition_penalty",
+        "stop",
+        "seed",
+        "max_tokens"
+      ],
+      "supported_features": [
+        "reasoning",
+        "tools"
+      ],
+      "metadata": {
+        "can_accept": true,
+        "routable_providers": 141,
+        "warm_providers": 106
+      }
+    },
+    {
+      "id": "mimo-v2.6-flash-mopd",
+      "object": "model",
+      "owned_by": "eigeninference",
+      "hugging_face_id": "XiaomiMiMo/MiMo-V2.6-Flash-RL",
+      "input_modalities": [
+        "text"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "context_length": 1048576,
+      "max_output_length": 131072,
+      "pricing": {
+        "prompt": "0.0000001",
+        "completion": "0.00000028",
+        "image": "0",
+        "request": "0",
+        "input_cache_read": "0.0000000028"
+      },
+      "supported_sampling_parameters": [
+        "temperature",
+        "top_p",
+        "top_k",
+        "frequency_penalty",
+        "presence_penalty",
+        "repetition_penalty",
+        "stop",
+        "seed",
+        "max_tokens"
+      ],
+      "supported_features": [
+        "reasoning",
+        "tools"
+      ],
+      "metadata": {
+        "can_accept": true,
+        "routable_providers": 23,
+        "warm_providers": 23
+      }
+    },
+    {
+      "id": "qwen3-vl-30b-a3b-instruct",
+      "object": "model",
+      "owned_by": "eigeninference",
+      "hugging_face_id": "Qwen/Qwen3-VL-30B-A3B-Instruct",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "output_modalities": [
+        "text"
+      ],
+      "context_length": 262144,
+      "max_output_length": 65536,
+      "pricing": {
+        "prompt": "0.00000009",
+        "completion": "0.0000004",
+        "image": "0",
+        "request": "0",
+        "input_cache_read": "0.000000045"
+      },
+      "supported_sampling_parameters": [
+        "temperature"
+      ],
+      "supported_features": [
+        "tools"
+      ],
+      "metadata": {
+        "can_accept": false,
+        "routable_providers": 0,
+        "warm_providers": 0
+      }
+    }
+  ]
+}

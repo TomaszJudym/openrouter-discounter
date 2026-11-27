@@ -38,7 +38,7 @@ func serverFor(t *testing.T, rec *recorder, current *presetResponse, getStatus i
 			w.WriteHeader(getStatus)
 			return
 		}
-		_, _ = w.Write([]byte(`{"data":{"slug":"x","designated_version":` + mustJSON(current.Data.DesignatedVersion) + `}}`))
+		_, _ = w.Write([]byte(`{"data":{"slug":"x","designated_version":` + mustJSON(t, current.Data.DesignatedVersion) + `}}`))
 	})
 	mux.HandleFunc("POST /api/v1/presets/{slug}/chat/completions", func(w http.ResponseWriter, r *http.Request) {
 		rec.postSlugs = append(rec.postSlugs, r.URL.Path)
@@ -57,10 +57,10 @@ func serverFor(t *testing.T, rec *recorder, current *presetResponse, getStatus i
 	return &Client{hc: srv.Client(), key: "test-or-key", base: srv.URL + "/api/v1"}
 }
 
-func mustJSON(v any) string {
+func mustJSON(tb testing.TB, v any) string {
 	b, err := json.Marshal(v)
 	if err != nil {
-		panic(err)
+		tb.Fatalf("marshal %T: %v", v, err)
 	}
 	return string(b)
 }
@@ -713,7 +713,7 @@ func TestPinnedSkipsWhenUnchangedPostsWhenFallbacksOn(t *testing.T) {
 func TestPinnedVersionTolerantRoundTrip(t *testing.T) {
 	// stored version as the API might echo it: allow_fallbacks dropped as a
 	// zero value, max_price as decimal strings
-	body := `{"data":{"slug":"x","designated_version":{"system_prompt":` + mustJSON(systemPrompt) + `,
+	body := `{"data":{"slug":"x","designated_version":{"system_prompt":` + mustJSON(t, systemPrompt) + `,
 		"config":{"models":["a/m","c/m","d/m"],"verbosity":"low","reasoning":{"effort":"max"},
 		"provider":{"only":["gmi/fp8","novita/bf16"],"max_price":{"prompt":"0.303","completion":"0.808"}}}}}}`
 	mux := http.NewServeMux()
@@ -729,5 +729,30 @@ func TestPinnedVersionTolerantRoundTrip(t *testing.T) {
 	c := &Client{hc: srv.Client(), key: "test-or-key", base: srv.URL + "/api/v1"}
 	if updated, err := c.Update(t.Context(), pinnedRows()); err != nil || updated || posts != 0 {
 		t.Errorf("Update() = %v, %v with %d POSTs, want false, nil, 0 (unchanged)", updated, err, posts)
+	}
+}
+
+func TestRequestMatchesPostedPreset(t *testing.T) {
+	system, params, ok := Request("strongest-discount-volition")
+	if !ok || system != volitionPrompt {
+		t.Fatalf("Request: ok %v, system %q…, want the volition prompt", ok, system[:min(20, len(system))])
+	}
+	want := makeBody(specs[rank.StrongestDiscountVolition], nil, pin{})
+	for _, k := range []string{"temperature", "top_p", "min_p", "presence_penalty", "max_tokens", "verbosity"} {
+		if params[k] != want[k] {
+			t.Errorf("%s = %v, want %v", k, params[k], want[k])
+		}
+	}
+	for _, k := range []string{"messages", "models", "provider"} {
+		if _, ok := params[k]; ok {
+			t.Errorf("params carry %s", k)
+		}
+	}
+	system, params, ok = Request("hermes-light")
+	if !ok || system != "" || params["reasoning"].(map[string]any)["effort"] != "none" {
+		t.Errorf("hermes-light: %q %v %v, want no prompt, effort none", system, params, ok)
+	}
+	if _, _, ok := Request("not-managed"); ok {
+		t.Error("unmanaged slug: ok")
 	}
 }

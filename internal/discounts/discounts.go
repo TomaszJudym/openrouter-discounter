@@ -142,6 +142,7 @@ func (m Model) WebSearch() bool {
 type Model struct {
 	ID                  string       `json:"id"`
 	CanonicalSlug       string       `json:"canonical_slug"`
+	HuggingFaceID       string       `json:"hugging_face_id"`
 	Pricing             *Pricing     `json:"pricing"`
 	Benchmarks          Benchmarks   `json:"benchmarks"`
 	Reasoning           *Reasoning   `json:"reasoning"`
@@ -193,12 +194,16 @@ type endpointsResponse struct {
 // and PeakPrompt/PeakCompletion the highest within the Horizon, USD per
 // Mtok, at the workload's context tier.
 type Discount struct {
-	ModelID        string
-	Serves         []string // every endpoint tag of the model, for pin conflicts
-	Offers         []Offer  // every usable endpoint, discounted or not
-	Provider       string   // picked endpoint's provider; empty for catalog rows
-	Endpoint       string   // picked endpoint tag to pin; empty for catalog rows
-	Window         string   // price windows within the Horizon; empty for flat discounts
+	ModelID string
+	Serves  []string // every endpoint tag of the model, for pin conflicts
+	Offers  []Offer  // every usable endpoint, discounted or not
+	// Refs are the non-Darkbloom offers a Darkbloom offer is priced against
+	// (see Offer.was); nil takes them from Offers. Set on Darkbloom-direct
+	// rows, whose Offers hold no OpenRouter endpoint.
+	Refs           []Offer
+	Provider       string // picked endpoint's provider; empty for catalog rows
+	Endpoint       string // picked endpoint tag to pin; empty for catalog rows
+	Window         string // price windows within the Horizon; empty for flat discounts
 	Price          float64
 	Was            float64
 	Pct            float64
@@ -229,21 +234,22 @@ func (d Discount) pick(r Require, w Workload, discounted bool) (Discount, bool) 
 	if len(d.Offers) == 0 {
 		return d, true
 	}
+	ref := d.reference(r, w)
 	best, bestPrice := -1, math.Inf(1)
 	for i, o := range d.Offers {
 		if !o.meets(r, w) {
 			continue
 		}
 		p := o.Avg.Blended(w)
-		if p < bestPrice || (p == bestPrice && o.discounted(w) && !d.Offers[best].discounted(w)) {
+		if p < bestPrice || (p == bestPrice && o.discounted(w, ref) && !d.Offers[best].discounted(w, ref)) {
 			best, bestPrice = i, p
 		}
 	}
-	if best < 0 || (discounted && !d.Offers[best].discounted(w)) {
+	if best < 0 || (discounted && !d.Offers[best].discounted(w, ref)) {
 		return Discount{}, false
 	}
 	o := d.Offers[best]
-	now, was := o.Avg.Blended(w), o.List.Blended(w)
+	now, was := o.Avg.Blended(w), o.was(w, ref)
 	avg, peak := o.Avg.For(w), o.Peak.For(w)
 	d.Provider, d.Endpoint, d.Window = o.Provider, o.Endpoint, o.Window
 	d.Price, d.Was, d.Pct = now, was, (now/was-1)*100

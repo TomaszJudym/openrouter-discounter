@@ -43,6 +43,7 @@ var labels = map[Sector]string{
 	StrongestDiscountInlandEmpire: "STRONGEST-DISCOUNT-INLANDEMPIRE — top 3 strongest-thinking discounted",
 	StrongestDiscountShivers:      "STRONGEST-DISCOUNT-SHIVERS — top 3 strongest-thinking discounted",
 	FreeHalflight:                 "FREE-HALFLIGHT — top 3 free models (AA Intelligence Index)",
+	DarkbloomDirect:               "DARKBLOOM — direct, cheapest 10 (via local dbproxy)",
 }
 
 // Label is the display header for the sector.
@@ -350,7 +351,12 @@ func sortFree(cands []freeRow) []Row {
 // unavailable the sector lists them tool-calling first, then alphabetically,
 // with a notice.
 func Rank(ctx context.Context, discs []discounts.Discount, free []FreeModel, prov Provider) Result {
-	scores := prov.Scores(ctx)
+	return ByScores(discs, free, prov.Scores(ctx))
+}
+
+// ByScores is Rank over scores already fetched, so one fetch can rank
+// several sets of discounts (OpenRouter and Darkbloom-direct).
+func ByScores(discs []discounts.Discount, free []FreeModel, scores map[Sector]SectorScores) Result {
 	res := Result{Scores: scores}
 	for _, sec := range Sectors {
 		sr, byModel := sectorBase(sec, scores)

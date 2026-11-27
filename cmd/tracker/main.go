@@ -1,7 +1,8 @@
-// Command tracker fetches the OpenRouter catalog, ranks active discounts per
-// sector (Epoch AI benchmarks, Artificial Analysis finance index, OpenRouter
-// popularity), and delivers the report to Telegram. It runs stateless: one invocation, one report, no persisted
-// state.
+// Command tracker fetches the OpenRouter catalog and Darkbloom-direct
+// prices, ranks active discounts per sector (Epoch AI benchmarks, Artificial
+// Analysis finance index, OpenRouter popularity; see internal/pipeline),
+// delivers the report to Telegram and repoints the OpenRouter presets. It
+// runs stateless: one invocation, one report, no persisted state.
 package main
 
 import (
@@ -14,24 +15,17 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tomaszjudym/openrouter-discounter/internal/aa"
-	"github.com/tomaszjudym/openrouter-discounter/internal/discounts"
-	"github.com/tomaszjudym/openrouter-discounter/internal/epoch"
-	"github.com/tomaszjudym/openrouter-discounter/internal/fetch"
 	"github.com/tomaszjudym/openrouter-discounter/internal/format"
-	"github.com/tomaszjudym/openrouter-discounter/internal/popularity"
+	"github.com/tomaszjudym/openrouter-discounter/internal/pipeline"
 	"github.com/tomaszjudym/openrouter-discounter/internal/preset"
 	"github.com/tomaszjudym/openrouter-discounter/internal/rank"
 	"github.com/tomaszjudym/openrouter-discounter/internal/telegram"
 )
 
-// Deadlines. Score sources run concurrently under scoreTimeout, so one
-// hanging source cannot eat the run; each Telegram send has sendTimeout of
-// its own.
+// Deadlines. Each Telegram send has sendTimeout of its own.
 const (
-	runTimeout   = 5 * time.Minute
-	scoreTimeout = 90 * time.Second
-	sendTimeout  = 60 * time.Second
+	runTimeout  = 5 * time.Minute
+	sendTimeout = 60 * time.Second
 )
 
 func main() {
@@ -70,166 +64,54 @@ func run() error {
 	defer cancel()
 	now := time.Now()
 
-	models, err := discounts.Fetch(ctx, hc)
+	res, err := pipeline.Run(ctx, hc, pipeline.Keys{
+		AA:        os.Getenv("AA_API_KEY"),
+		Darkbloom: os.Getenv("DARKBLOOM_API_KEY"),
+	}, now)
 	if err != nil {
 		return err
 	}
-	discs, priced, free, err := discounts.FetchDiscounts(ctx, hc, models, now)
-	if err != nil {
-		// individual endpoint failures are tolerable; the affected models
-		// are simply missing from the report
-		log.Printf("endpoint fetch failures (continuing): %v", err)
-	}
-	logWindows(discs)
-	// Selection sees only rows within the price ceilings; expensive-long
-	// picks from the full discounted set, ignoring the ceilings.
-	allDiscs := discs
-	discs = discounts.Affordable(discs)
-	if len(discs) == 0 {
+	logDirect(res.Direct)
+	logPicks(res.OpenRouter)
+	if res.NoDiscounts {
 		return send(format.NoDiscounts(now))
 	}
-	res := rankSectors(ctx, hc, models, discs, rank.TextFree(free, models))
-	// The halflight sector is shown in Telegram; all strongest-discount
-	// presets are updated with the same top-3 strongest-thinking models.
-	intel := intelligence(models)
-	intelOK := len(intel) > 0
-	if !intelOK {
-		log.Printf("catalog carries no intelligence index (skipping strongest-discount)")
-	}
-	telegramSectors := res.Sectors
-	sdSectors := buildIntelSectors(models, discs, intel, intelOK)
-	if len(sdSectors) > 0 {
-		telegramSectors = append(telegramSectors, sdSectors[0])
-	}
-	telegramRes := rank.Result{Sectors: telegramSectors}
-	for _, msg := range format.Messages(telegramRes, now) {
+	for _, msg := range format.Messages(res.Report, now) {
 		if err := send(msg); err != nil {
 			return err
 		}
 	}
-	sectors := append(res.Sectors, rank.SelectExpensiveLong(models, allDiscs))
-	if intelOK && len(sdSectors) > 0 {
-		sectors = append(sectors, sdSectors...)
-	}
-	if intelOK {
-		sectors = append(sectors, hermesSectors(models, discs, priced, intel, res.Scores[rank.Code].ByModel)...)
-	}
 	// Presets update after the Telegram send, so a failure here never costs
 	// the report, but it fails the run so CI shows it.
-	return updatePresets(ctx, hc, sectors)
+	return updatePresets(ctx, hc, res.OpenRouter)
 }
 
-// rankSectors scores the sectors from their sources — Epoch AI (math,
-// code), Artificial Analysis (finance), OpenRouter popularity (long
-// context) — and logs every sector that fell back to price-only.
-func rankSectors(ctx context.Context, hc *http.Client, models []discounts.Model, discs []discounts.Discount, free []rank.FreeModel) rank.Result {
-	ids := make([]string, len(models))
-	for i, m := range models {
-		ids[i] = m.ID
-	}
-	ctx, cancel := context.WithTimeout(ctx, scoreTimeout)
-	defer cancel()
-	g := fetch.Getter{HC: hc}
-	prov := rank.Providers{
-		// models WebDev Arena does not rate fall back to the catalog's
-		// coding index, calibrated onto the Epoch scale
-		rank.Backfill{
-			Provider: epoch.New(g, ids),
-			Sectors:  []rank.Sector{rank.Code, rank.CodeFree},
-			Fallback: codingIndex(models),
-		},
-		aa.New(g, os.Getenv("AA_API_KEY"), ids),
-		popularity.New(g, models, rank.LCR),
-	}
-	res := rank.Rank(ctx, discs, free, prov)
-	for _, sr := range res.Sectors {
-		if sr.Err != "" {
-			log.Printf("sector %s price-only: %s error: %s", sr.Sector, sr.Source, sr.Err)
+// logDirect logs the Darkbloom-direct rows preset.Picks routes per preset:
+// the same rankings cmd/dbproxy computes for itself — dbproxy re-picks at
+// its own now, nothing here hands rows to it or writes them anywhere.
+func logDirect(sectors []rank.SectorResult) {
+	logSide("darkbloom", sectors)
+}
+
+// logPicks logs the OpenRouter-side rows preset.Picks routes per preset:
+// the same rankings updatePresets pushes into the OpenRouter presets.
+// Unscored and unpinnable rows are dropped by preset.Picks, so on the
+// price-only fallback path the log can list fewer than preset.TopN.
+func logPicks(sectors []rank.SectorResult) {
+	logSide("openrouter", sectors)
+}
+
+// logSide logs each preset sector's routed models: preset.Picks' rows, the
+// exact selection the presets route by.
+func logSide(side string, sectors []rank.SectorResult) {
+	for _, sr := range sectors {
+		picks := preset.Picks(sr.Rows)
+		ids := make([]string, 0, len(picks))
+		for _, r := range picks {
+			ids = append(ids, r.ModelID)
 		}
+		log.Printf("%s %s: %s", side, preset.Slugs[sr.Sector], strings.Join(ids, ", "))
 	}
-	return res
-}
-
-// logWindows logs every discount that holds only during a UTC time window.
-func logWindows(discs []discounts.Discount) {
-	for _, d := range discs {
-		if d.Window != "" {
-			log.Printf("window discount %s via %s: %.0f%% during %s", d.ModelID, provider(d.Provider), d.Pct, d.Window)
-		}
-	}
-}
-
-// provider names a discount's endpoint; catalog rows price every provider.
-func provider(p string) string {
-	if p == "" {
-		return "any provider"
-	}
-	return p
-}
-
-// intelligence maps catalog ids to the AA Intelligence Index that the
-// OpenRouter catalog carries (benchmarks.artificial_analysis).
-func intelligence(models []discounts.Model) map[string]float64 {
-	return catalogScores(models, func(m discounts.Model) float64 { return m.Benchmarks.ArtificialAnalysis.IntelligenceIndex })
-}
-
-// codingIndex maps catalog ids to the catalog's AA Coding Index, the
-// fallback for models WebDev Arena does not rate.
-func codingIndex(models []discounts.Model) map[string]float64 {
-	return catalogScores(models, func(m discounts.Model) float64 { return m.Benchmarks.ArtificialAnalysis.CodingIndex })
-}
-
-// catalogScores maps catalog ids to a positive catalog benchmark value. A
-// ":free" id without its own value inherits the base model's; other
-// variants (":thinking", ":exacto", …) do not, so they cannot duplicate the
-// base model in a top 3.
-func catalogScores(models []discounts.Model, value func(discounts.Model) float64) map[string]float64 {
-	out := make(map[string]float64, len(models))
-	for _, m := range models {
-		if v := value(m); v > 0 {
-			out[m.ID] = v
-		}
-	}
-	for _, m := range models {
-		if _, ok := out[m.ID]; ok {
-			continue
-		}
-		if base, ok := strings.CutSuffix(m.ID, ":free"); ok {
-			if v, ok := out[base]; ok {
-				out[m.ID] = v
-			}
-		}
-	}
-	return out
-}
-
-// buildIntelSectors creates the strongest-discount preset results when
-// intelligence scores are available. Returns the strongest-discount sectors
-// (for Telegram and for presets).
-func buildIntelSectors(models []discounts.Model, discs []discounts.Discount, intel map[string]float64, intelOK bool) []rank.SectorResult {
-	if !intelOK {
-		return nil
-	}
-	sd := rank.SelectStrongestDiscount(models, discs, intel)
-	if len(sd.Rows) == 0 {
-		return nil
-	}
-	return []rank.SectorResult{
-		sd,
-		{Sector: rank.StrongestDiscountVolition, Rows: sd.Rows},
-		{Sector: rank.StrongestDiscountInlandEmpire, Rows: sd.Rows},
-		{Sector: rank.StrongestDiscountShivers, Rows: sd.Rows},
-	}
-}
-
-// hermesSectors selects the per-role Hermes presets and logs each role's
-// #1 pick with its quality source.
-func hermesSectors(models []discounts.Model, discs, priced []discounts.Discount, intel, code map[string]float64) []rank.SectorResult {
-	out := rank.SelectHermes(models, discs, priced, intel, code)
-	for _, sr := range out {
-		log.Printf("%s: #1 %s (%s %.1f)", sr.Sector, sr.Rows[0].ModelID, sr.Source, sr.Rows[0].Score)
-	}
-	return out
 }
 
 // updatePresets points each category's preset at its top 3 models: the

@@ -39,6 +39,8 @@ jobs:
           TELEGRAM_CHANNEL_ID: ${{ secrets.TELEGRAM_CHANNEL_ID }}
           AA_API_KEY: ${{ secrets.AA_API_KEY }}
           OPENROUTER_MANAGEMENT_KEY: ${{ secrets.OPENROUTER_MANAGEMENT_KEY }}
+          # optional: Darkbloom-direct prices (dbproxy routes them)
+          DARKBLOOM_API_KEY: ${{ secrets.DARKBLOOM_API_KEY }}
           TRACKER_REPORT: ${{ github.event.schedule != '7 0-20/2 * * *' }}
         run: |
           go build -o tracker ./cmd/tracker

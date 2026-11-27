@@ -278,6 +278,13 @@ type Offer struct {
 	Tools     bool
 	Context   int
 	MaxOutput int // max_completion_tokens
+	// Direct marks a Darkbloom-direct offer (api.darkbloom.dev, see
+	// discounts.Direct): billed to Darkbloom credits, routed by the local
+	// proxy, never pinned in an OpenRouter preset.
+	Direct bool
+	// Blind marks an offer known to refuse image input although its model
+	// takes images (a Darkbloom build served text-only).
+	Blind bool
 }
 
 // newOffer prices one endpoint (or the catalog, tag "") over the Horizon
@@ -316,9 +323,46 @@ func newOffer(provider, tag string, p Pricing, cached bool, from time.Time) (Off
 	return o, true
 }
 
-// discounted reports whether the offer undercuts its list price under w.
-func (o Offer) discounted(w Workload) bool {
-	return o.Avg.Blended(w) < o.List.Blended(w)
+// discounted reports whether the offer undercuts its was price under w (see
+// was); ref is the reference price for Darkbloom offers.
+func (o Offer) discounted(w Workload, ref float64) bool {
+	return o.Avg.Blended(w) < o.was(w, ref)
+}
+
+// was is the offer's price before the saving, blended under w: its list
+// price; for a Darkbloom offer the higher of that and ref, the cheapest
+// other provider's price, so Darkbloom undercutting every other provider
+// counts as a discount. A non-finite ref (no other provider) is ignored.
+func (o Offer) was(w Workload, ref float64) float64 {
+	list := o.List.Blended(w)
+	if o.Darkbloom() && !math.IsInf(ref, 1) {
+		return max(list, ref)
+	}
+	return list
+}
+
+// Darkbloom reports whether the offer is served by Darkbloom, directly or
+// through its OpenRouter endpoint.
+func (o Offer) Darkbloom() bool {
+	return o.Direct || o.Provider == DarkbloomProvider
+}
+
+// reference is the cheapest average price under w among d's non-Darkbloom
+// offers that meet r, ignoring the price ceilings (the reference is what
+// the request would cost elsewhere, however dear); +Inf when none does.
+func (d Discount) reference(r Require, w Workload) float64 {
+	refs := d.Refs
+	if refs == nil {
+		refs = d.Offers
+	}
+	r.Capped = false
+	ref := math.Inf(1)
+	for _, o := range refs {
+		if !o.Darkbloom() && o.meets(r, w) {
+			ref = min(ref, o.Avg.Blended(w))
+		}
+	}
+	return ref
 }
 
 // Require is what a preset needs from its pinned endpoint.
@@ -329,11 +373,12 @@ type Require struct {
 	// MinOutput is the preset's max_tokens: a pinned endpoint with a lower
 	// max_completion_tokens would be filtered out by OpenRouter.
 	MinOutput int
+	Vision    bool // endpoint takes image input (see Offer.Blind)
 }
 
 // meets reports whether the offer satisfies r for requests shaped like w.
 func (o Offer) meets(r Require, w Workload) bool {
-	if r.Tools && !o.Tools {
+	if (r.Tools && !o.Tools) || (r.Vision && o.Blind) {
 		return false
 	}
 	if need := max(r.MinContext, int(w.Input+w.Output)); o.Context > 0 && o.Context < need {
@@ -422,7 +467,8 @@ const flexTier = "flex"
 // usable drops flex service-tier endpoints, then endpoints with weights
 // quantized to 4 bits or fewer while another remaining endpoint serves the
 // same model at higher precision (a natively 4-bit model keeps its 4-bit
-// endpoints). Unknown quantization passes. Uptime is not filtered: presets
+// endpoints). Darkbloom is exempt: it serves only 4-bit builds and is
+// prepaid. Unknown quantization passes. Uptime is not filtered: presets
 // fall back across models, not providers.
 func usable(eps []Endpoint) []Endpoint {
 	std := make([]Endpoint, 0, len(eps))
@@ -436,7 +482,7 @@ func usable(eps []Endpoint) []Endpoint {
 	}
 	out := make([]Endpoint, 0, len(std))
 	for _, e := range std {
-		if b := quantBits(e.Quantization); b > 0 && b <= 4 && b < top {
+		if b := quantBits(e.Quantization); b > 0 && b <= 4 && b < top && e.Provider != DarkbloomProvider {
 			continue
 		}
 		out = append(out, e)

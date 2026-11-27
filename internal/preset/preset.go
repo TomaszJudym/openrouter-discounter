@@ -15,6 +15,7 @@ import (
 	"encoding/json/v2"
 	"fmt"
 	"io"
+	"maps"
 	"math"
 	"net/http"
 	"slices"
@@ -23,6 +24,7 @@ import (
 
 	_ "embed"
 
+	"github.com/tomaszjudym/openrouter-discounter/internal/fetch"
 	"github.com/tomaszjudym/openrouter-discounter/internal/rank"
 )
 
@@ -247,26 +249,32 @@ const capMargin = 1.01
 // not round up a whole step.
 func ceilCap(v float64) float64 { return math.Ceil(math.Round(v*capMargin*1e8)/1e4) / 1e4 }
 
-// topScored takes the first n scored rows in ranking order. When the rows
-// carry endpoints (paid discounts), only rows that pin without conflict are
-// taken (see rank.Pinnable); the pin lists their endpoint tags and caps the
-// price at their highest peak rates. Free rows have no endpoint and route
-// unpinned.
-func topScored(rows []rank.Row, n int) (models []string, p pin) {
+// Picks are the rows a preset routes: the first TopN scored rows in ranking
+// order. When the rows carry endpoints (paid discounts), only rows that pin
+// without conflict are taken (see rank.Pinnable); free rows have no
+// endpoint and route unpinned. cmd/dbproxy takes the Darkbloom-direct
+// presets' models by the same rule.
+func Picks(rows []rank.Row) []rank.Row { return topRows(rows, TopN) }
+
+func topRows(rows []rank.Row, n int) []rank.Row {
 	scored := make([]rank.Row, 0, len(rows))
 	for _, r := range rows {
 		if r.Scored {
 			scored = append(scored, r)
 		}
 	}
-	pinned := slices.ContainsFunc(scored, func(r rank.Row) bool { return r.Endpoint != "" })
-	if pinned {
+	if slices.ContainsFunc(scored, func(r rank.Row) bool { return r.Endpoint != "" }) {
 		scored = rank.Pinnable(scored, n)
 	}
-	scored = scored[:min(n, len(scored))]
-	for _, r := range scored {
+	return scored[:min(n, len(scored))]
+}
+
+// topScored takes the preset's rows (see topRows); the pin lists their
+// endpoint tags and caps the price at their highest peak rates.
+func topScored(rows []rank.Row, n int) (models []string, p pin) {
+	for _, r := range topRows(rows, n) {
 		models = append(models, r.ModelID)
-		if !pinned {
+		if r.Endpoint == "" {
 			continue
 		}
 		if !slices.Contains(p.only, r.Endpoint) {
@@ -371,12 +379,17 @@ func (c *Client) current(ctx context.Context, slug string) (*version, error) {
 		return nil, fmt.Errorf("GET preset %s: %w", slug, err)
 	}
 	defer func() { _ = resp.Body.Close() }() // read-only: a close error is not actionable
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return nil, fmt.Errorf("read preset %s: %w", slug, err)
+	}
 	switch {
 	case resp.StatusCode == http.StatusNotFound:
 		return nil, nil // preset missing: the POST below creates it
 	case resp.StatusCode != http.StatusOK:
-		return nil, fmt.Errorf("GET preset %s: status %d: %.300s", slug, resp.StatusCode, body)
+		// The body could echo the management key; sanitize before it lands
+		// in logs.
+		return nil, fmt.Errorf("GET preset %s: status %d: %s", slug, resp.StatusCode, fetch.Sanitize(string(body), c.key))
 	}
 	var r presetResponse
 	if err := json.Unmarshal(body, &r); err != nil {
@@ -454,9 +467,39 @@ func (c *Client) post(ctx context.Context, slug string, models []string, p pin, 
 		return fmt.Errorf("POST preset %s: %w", slug, err)
 	}
 	defer func() { _ = resp.Body.Close() }() // read-only: a close error is not actionable
-	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return fmt.Errorf("POST preset %s: read body: %w", slug, err)
+	}
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("POST preset %s: status %d: %.300s", slug, resp.StatusCode, respBody)
+		// The body could echo the management key; sanitize before it lands
+		// in logs.
+		return fmt.Errorf("POST preset %s: status %d: %s", slug, resp.StatusCode, fetch.Sanitize(string(respBody), c.key))
 	}
 	return nil
 }
+
+// Request is what the preset slug applies to a request served outside
+// OpenRouter (cmd/dbproxy, Darkbloom direct): its system prompt (empty for
+// none) and its parameters exactly as posted to the OpenRouter preset,
+// without models, provider routing or messages. ok is false for an
+// unmanaged slug.
+func Request(slug string) (system string, params map[string]any, ok bool) {
+	for sec, s := range Slugs {
+		if s != slug {
+			continue
+		}
+		spec, ok := specs[sec]
+		if !ok {
+			return "", nil, false
+		}
+		params = makeBody(spec, nil, pin{})
+		delete(params, "messages")
+		delete(params, "models")
+		return spec.systemPrompt, params, true
+	}
+	return "", nil, false
+}
+
+// SortedSlugs lists the managed preset slugs in alphabetical order.
+func SortedSlugs() []string { return slices.Sorted(maps.Values(Slugs)) }

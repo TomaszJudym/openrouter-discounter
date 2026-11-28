@@ -5,6 +5,7 @@ import (
 	"context"
 	"io"
 	"log"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -39,6 +40,30 @@ const darkbloomJSON = `{"data":[{"id":"mistral-small-4bit","hugging_face_id":"mi
 	`"pricing":{"prompt":"0.0000001","completion":"0.0000004"},"metadata":{"can_accept":true,` +
 	`"routable_providers":1}}]}`
 
+// darkbloomTwoBuildsJSON serves the catalog model twice in one list, the
+// 4-bit build cheaper, so the direct row picks that build.
+const darkbloomTwoBuildsJSON = `{"data":[` +
+	`{"id":"mistral-small-4bit","hugging_face_id":"mistralai/Mistral-Small-3",` +
+	`"input_modalities":["text"],"context_length":2000000,"max_output_length":100000,` +
+	`"pricing":{"prompt":"0.0000001","completion":"0.0000004"},"metadata":{"can_accept":true,` +
+	`"routable_providers":1}},` +
+	`{"id":"mistral-small-8bit","hugging_face_id":"mistralai/Mistral-Small-3",` +
+	`"input_modalities":["text"],"context_length":2000000,"max_output_length":100000,` +
+	`"pricing":{"prompt":"0.0000002","completion":"0.0000008"},"metadata":{"can_accept":true,` +
+	`"routable_providers":1}}]}`
+
+// darkbloomTwoBuildsSwappedJSON is the same list with the prices flipped: the
+// 8-bit build is now the row's cheapest offer.
+const darkbloomTwoBuildsSwappedJSON = `{"data":[` +
+	`{"id":"mistral-small-4bit","hugging_face_id":"mistralai/Mistral-Small-3",` +
+	`"input_modalities":["text"],"context_length":2000000,"max_output_length":100000,` +
+	`"pricing":{"prompt":"0.0000004","completion":"0.0000016"},"metadata":{"can_accept":true,` +
+	`"routable_providers":1}},` +
+	`{"id":"mistral-small-8bit","hugging_face_id":"mistralai/Mistral-Small-3",` +
+	`"input_modalities":["text"],"context_length":2000000,"max_output_length":100000,` +
+	`"pricing":{"prompt":"0.0000002","completion":"0.0000008"},"metadata":{"can_accept":true,` +
+	`"routable_providers":1}}]}`
+
 // stubAPI is the scripted pipeline surface: it records requests and answers
 // from script (keys "METHOD path"), defaulting to a 404.
 type stubAPI struct {
@@ -51,7 +76,10 @@ type stubAPI struct {
 
 func newStubAPI(t *testing.T, script map[string]reply) *stubAPI {
 	t.Helper()
-	s := &stubAPI{script: script, base: http.DefaultTransport}
+	s := &stubAPI{script: maps.Clone(script), base: http.DefaultTransport}
+	if s.script == nil {
+		s.script = map[string]reply{}
+	}
 	s.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.Copy(io.Discard, r.Body)
 		_ = r.Body.Close()
@@ -82,13 +110,12 @@ func (s *stubAPI) transport() http.RoundTripper {
 	})
 }
 
-// swap points http.DefaultTransport at the stub for the test: refresh builds
-// its own client, which falls back to the default transport.
-func (s *stubAPI) swap(t *testing.T) {
-	t.Helper()
-	prev := http.DefaultTransport
-	http.DefaultTransport = s.transport()
-	t.Cleanup(func() { http.DefaultTransport = prev })
+// set replaces one scripted reply, so a test can change an upstream price
+// between two refreshes.
+func (s *stubAPI) set(key string, rep reply) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.script[key] = rep
 }
 
 // called reports whether the stub saw a request for key.
@@ -124,13 +151,13 @@ func TestRefreshRoutesDarkbloomFirst(t *testing.T) {
 		"GET /api/v1/models": {status: http.StatusOK, body: catalogJSON},
 		"GET /v1/models":     {status: http.StatusOK, body: darkbloomJSON},
 	})
-	api.swap(t)
-	p := &Proxy{HC: &http.Client{Transport: api.transport()}}
+	hc := &http.Client{Transport: api.transport()}
+	p := &Proxy{HC: hc}
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		refresh(ctx, p, pipeline.Keys{Darkbloom: dbKey})
+		refresh(ctx, p, pipeline.Keys{Darkbloom: dbKey}, hc, time.Hour)
 	}()
 	waitFor(t, 30*time.Second, func() bool {
 		rt := p.routes.Load()
@@ -170,8 +197,8 @@ func TestRefreshDarkbloomFailureClearsRoutes(t *testing.T) {
 		"GET /api/v1/models": {status: http.StatusOK, body: catalogJSON},
 		"GET /v1/models":     {status: http.StatusForbidden, body: `{"error":{"message":"bad key ` + dbKey + `"}}`},
 	})
-	api.swap(t)
-	p := &Proxy{HC: &http.Client{Transport: api.transport()}}
+	hc := &http.Client{Transport: api.transport()}
+	p := &Proxy{HC: hc}
 	p.SetRoutes(routes{"hermes-review": {direct: []string{"stale-1"}, dbFirst: true}})
 	var buf bytes.Buffer
 	log.SetOutput(&buf)
@@ -180,7 +207,7 @@ func TestRefreshDarkbloomFailureClearsRoutes(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		refresh(ctx, p, pipeline.Keys{Darkbloom: dbKey})
+		refresh(ctx, p, pipeline.Keys{Darkbloom: dbKey}, hc, time.Hour)
 	}()
 	waitFor(t, 30*time.Second, func() bool {
 		rt := p.routes.Load()
@@ -211,7 +238,7 @@ func TestRefreshKeepsRoutesWhenRunFails(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		refresh(ctx, p, pipeline.Keys{Darkbloom: dbKey})
+		refresh(ctx, p, pipeline.Keys{Darkbloom: dbKey}, &http.Client{}, time.Hour)
 	}()
 	select {
 	case <-done:
@@ -248,5 +275,39 @@ func TestLogRoutes(t *testing.T) {
 	}
 	if lines := strings.Count(strings.TrimSpace(out), "\n") + 1; lines != len(preset.SortedSlugs()) {
 		t.Errorf("log has %d lines, want one per managed slug (%d)", lines, len(preset.SortedSlugs()))
+	}
+}
+
+// TestRefreshPicksUpPriceFlip: a refresh reruns discovery, so a price change
+// at the upstream moves the route without a restart. The ticker drives the
+// run (here 20 ms; production takes DBPROXY_REFRESH), and the new table is
+// swapped in atomically at the end of the run.
+func TestRefreshPicksUpPriceFlip(t *testing.T) {
+	api := newStubAPI(t, map[string]reply{
+		"GET /api/v1/models": {status: http.StatusOK, body: catalogJSON},
+		"GET /v1/models":     {status: http.StatusOK, body: darkbloomTwoBuildsJSON},
+	})
+	hc := &http.Client{Transport: api.transport()}
+	p := &Proxy{HC: hc}
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		refresh(ctx, p, pipeline.Keys{Darkbloom: dbKey}, hc, 20*time.Millisecond)
+	}()
+	waitFor(t, 30*time.Second, func() bool {
+		r, ok := p.route("hermes-light")
+		return ok && slices.Equal(r.direct, []string{"mistral-small-4bit"})
+	})
+	api.set("GET /v1/models", reply{status: http.StatusOK, body: darkbloomTwoBuildsSwappedJSON})
+	waitFor(t, 30*time.Second, func() bool {
+		r, ok := p.route("hermes-light")
+		return ok && slices.Equal(r.direct, []string{"mistral-small-8bit"})
+	})
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(30 * time.Second):
+		t.Fatal("refresh did not exit after cancel")
 	}
 }

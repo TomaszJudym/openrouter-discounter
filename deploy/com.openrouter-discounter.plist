@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  launchd agent for scripts/local-cron.sh (see README, "Local pi-subagents
+  integration"). Replace __REPO__ with the absolute checkout path and __HOME__
+  with $HOME before loading; launchd does not expand either.
+-->
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.openrouter-discounter</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/bin/sh</string>
+		<string>__REPO__/scripts/local-cron.sh</string>
+	</array>
+	<!-- 2 h, the GitHub Actions presets-rerun cadence. -->
+	<key>StartInterval</key>
+	<integer>7200</integer>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>StandardOutPath</key>
+	<string>__HOME__/Library/Logs/openrouter-discounter.log</string>
+	<key>StandardErrorPath</key>
+	<string>__HOME__/Library/Logs/openrouter-discounter.log</string>
+	<key>ProcessType</key>
+	<string>Background</string>
+</dict>
+</plist>

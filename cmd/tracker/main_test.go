@@ -436,7 +436,7 @@ func TestUpdatePresetsReportsFailures(t *testing.T) {
 		t.Fatal("updatePresets: nil error, want the joined failure so the run exits nonzero")
 	}
 	msg := err.Error()
-	if !strings.Contains(msg, "1 of 7 preset updates failed") || !strings.Contains(msg, "preset admech-code-oracle") {
+	if !strings.Contains(msg, "1 of 8 preset updates failed") || !strings.Contains(msg, "preset admech-code-oracle") {
 		t.Errorf("error = %q, want the failed count and slug", msg)
 	}
 	if s.requests() != 4 {
@@ -460,7 +460,7 @@ func TestUpdatePresetsOnlyManagedSlugs(t *testing.T) {
 	managed := map[rank.Sector]bool{
 		rank.Code: true, rank.AdmechOracle: true, rank.AdmechReviewer: true,
 		rank.AdmechResearcher: true, rank.AdmechAuditor: true,
-		rank.AdmechDelegate: true, rank.AdmechScout: true,
+		rank.AdmechDelegate: true, rank.AdmechScout: true, rank.AdmechVision: true,
 	}
 	sectors := []rank.SectorResult{
 		{Sector: rank.Math, Rows: []rank.Row{{ModelID: "v/math", Scored: true}}},
@@ -474,6 +474,7 @@ func TestUpdatePresetsOnlyManagedSlugs(t *testing.T) {
 		{Sector: rank.AdmechAuditor, Rows: []rank.Row{{ModelID: "v/auditor", Scored: true}}},
 		{Sector: rank.AdmechDelegate, Rows: []rank.Row{{ModelID: "v/delegate", Scored: true}}},
 		{Sector: rank.AdmechScout, Rows: []rank.Row{{ModelID: "v/scout", Scored: true}}},
+		{Sector: rank.AdmechVision, Rows: []rank.Row{{ModelID: "v/vision", Scored: true}}},
 	}
 	if err := updatePresets(t.Context(), hc, sectors); err != nil {
 		t.Fatalf("updatePresets: %v", err)

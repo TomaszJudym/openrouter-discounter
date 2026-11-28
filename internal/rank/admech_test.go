@@ -275,9 +275,11 @@ func TestSelectAdmechDelegateCodeFloor(t *testing.T) {
 
 func TestSelectAdmechRoleOrder(t *testing.T) {
 	c := caps{ctx: 500_000, tools: true}
-	models := []discounts.Model{admechModel("a/m", c, 40)}
-	out := SelectAdmech(models, []discounts.Discount{disc("a/m", 0.1, 0.4)}, []discounts.Discount{disc("a/m", 0.1, 0.4)}, map[Sector]SectorScores{})
-	want := []Sector{AdmechOracle, AdmechReviewer, AdmechResearcher, AdmechAuditor, AdmechDelegate, AdmechScout}
+	vc := caps{ctx: 500_000, tools: true, vision: true}
+	models := []discounts.Model{admechModel("a/m", c, 40), admechModel("v/a", vc, 40)}
+	discs := []discounts.Discount{disc("a/m", 0.1, 0.4), disc("v/a", 0.1, 0.4)}
+	out := SelectAdmech(models, discs, discs, map[Sector]SectorScores{})
+	want := []Sector{AdmechOracle, AdmechReviewer, AdmechResearcher, AdmechAuditor, AdmechDelegate, AdmechScout, AdmechVision}
 	if len(out) != len(want) {
 		t.Fatalf("got %d sectors, want %d", len(out), len(want))
 	}
@@ -289,7 +291,7 @@ func TestSelectAdmechRoleOrder(t *testing.T) {
 }
 
 func TestSelectAdmechNeedsRegistered(t *testing.T) {
-	for _, sec := range []Sector{AdmechOracle, AdmechReviewer, AdmechResearcher, AdmechAuditor, AdmechDelegate, AdmechScout} {
+	for _, sec := range []Sector{AdmechOracle, AdmechReviewer, AdmechResearcher, AdmechAuditor, AdmechDelegate, AdmechScout, AdmechVision} {
 		if _, ok := needs[sec]; !ok {
 			t.Errorf("%s missing from needs map", sec)
 		}
@@ -309,5 +311,51 @@ func TestSelectAdmechNeedsRegistered(t *testing.T) {
 	}
 	if n := AdmechDelegate.Need(); n.Require.MinContext != 0 || !n.Require.Tools {
 		t.Errorf("delegate Need = %+v, want Tools without MinContext", n)
+	}
+	if n := AdmechVision.Need(); !n.Require.Vision {
+		t.Errorf("looker Need = %+v, want Vision requirement", n)
+	}
+}
+
+// The looker is the admech family's vision companion: only vision-capable
+// pool models qualify, ranked by cheapness alone (no sector scores needed,
+// so it exists even on zero-discount days), with cheapness as the score.
+func TestSelectAdmechVisionLooker(t *testing.T) {
+	c := caps{ctx: 500_000, tools: true}
+	vc := caps{ctx: 500_000, tools: true, vision: true}
+	models := []discounts.Model{
+		admechModel("b/plain", c, 40), // no vision: must stay out of the looker rows
+		admechModel("a/cheap", vc, 40),
+		admechModel("c/pricey", vc, 30),
+	}
+	discs := []discounts.Discount{
+		disc("b/plain", 0.1, 0.4),
+		disc("a/cheap", 0.01, 0.05),
+		disc("c/pricey", 0.5, 1.0),
+	}
+	out := SelectAdmech(models, discs, discs, map[Sector]SectorScores{})
+	var found bool
+	var sr SectorResult
+	for _, r := range out {
+		if r.Sector == AdmechVision {
+			found, sr = true, r
+		}
+	}
+	if !found {
+		t.Fatal("AdmechVision omitted: the looker must appear even without sector scores")
+	}
+	if got := idsOf(sr.Rows); !slices.Equal(got, []string{"a/cheap", "c/pricey"}) {
+		t.Errorf("looker = %v, want the vision models only, cheapest first", got)
+	}
+	if sr.Source != SourceCheapness || sr.Err != "" {
+		t.Errorf("looker source/err = %q/%q, want %q/empty", sr.Source, sr.Err, SourceCheapness)
+	}
+	for _, row := range sr.Rows {
+		if !row.Scored {
+			t.Errorf("looker row %s Scored = false, want cheapness as score", row.ModelID)
+		}
+	}
+	if len(sr.Rows) < 2 || sr.Rows[0].Score < sr.Rows[1].Score {
+		t.Errorf("looker scores = %v, want cheaper model first", []float64{sr.Rows[0].Score, sr.Rows[1].Score})
 	}
 }

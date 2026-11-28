@@ -447,6 +447,18 @@ func TestShiversPromptEmbedded(t *testing.T) {
 	}
 }
 
+func TestVisionPromptEmbedded(t *testing.T) {
+	if !strings.HasPrefix(visionPrompt, "You are the looker role in the admech-code pipeline") {
+		t.Error("vision prompt missing its role description")
+	}
+	if strings.TrimSpace(visionPrompt) != visionPrompt {
+		t.Error("vision prompt not trimmed")
+	}
+	if strings.ContainsAny(visionPrompt, "\r") {
+		t.Error("embedded vision prompt contains carriage returns")
+	}
+}
+
 func strongestDiscountInlandEmpireRows() rank.SectorResult {
 	return rank.SectorResult{Sector: rank.StrongestDiscountInlandEmpire, Rows: []rank.Row{
 		{ModelID: "google/gemini-2.5-pro", Score: 89.2, Scored: true},

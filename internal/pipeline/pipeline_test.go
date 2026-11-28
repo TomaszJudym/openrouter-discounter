@@ -102,7 +102,7 @@ func taggedEndpointsBody(id string, discount float64) string {
 
 // TestRunEmitsEveryManagedPresetSector: each preset.ManagedSlugs() slug has
 // rows on both sides whenever the day has eligible candidates: admech-code
-// from the code sector and the six admech-code-<role> sectors from
+// from the code sector and the seven admech-code-<role> sectors from
 // rank.SelectAdmech. cmd/tracker and cmd/pipresets rely on these rows to
 // update or emit every managed preset.
 func TestRunEmitsEveryManagedPresetSector(t *testing.T) {

@@ -38,7 +38,7 @@ const managedBy = "openrouter-discounter"
 
 // orSector maps a managed slug to the rank sector string its rows are
 // listed under: preset.Slugs inverted. admech-code ranks in the existing
-// code sector; the six admech-code-* sectors carry the slug as their own
+// code sector; the seven admech-code-* sectors carry the slug as their own
 // sector name. Both sides (OpenRouter and Darkbloom-direct) use the same
 // sector layout.
 var orSector = func() map[string]string {

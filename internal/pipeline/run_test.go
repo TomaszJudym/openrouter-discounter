@@ -83,6 +83,7 @@ func (rw rewriter) RoundTrip(req *http.Request) (*http.Response, error) {
 func catalogEntry(id string, ii float64) string {
 	return fmt.Sprintf(`{"id":%q,"hugging_face_id":%q,"pricing":{"prompt":"0.0000002","completion":"0.0000008"},`+
 		`"benchmarks":{"artificial_analysis":{"intelligence_index":%v}},`+
+		`"architecture":{"input_modalities":["text","image"]},`+
 		`"supported_parameters":["tools"],"context_length":2000000}`, id, id, ii)
 }
 
@@ -99,6 +100,7 @@ func endpointsBody(id string, discount float64) string {
 // id at half its list price, direct.
 func darkbloomBody(id string) string {
 	return fmt.Sprintf(`{"data":[{"id":%q,"pricing":{"prompt":"0.0000001","completion":"0.0000004"},`+
+		`"input_modalities":["text","image"],`+
 		`"context_length":2000000,"max_output_length":1048576,`+
 		`"metadata":{"can_accept":true,"routable_providers":2}}]}`, id)
 }

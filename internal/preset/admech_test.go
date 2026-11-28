@@ -8,11 +8,11 @@ import (
 	"github.com/tomaszjudym/openrouter-discounter/internal/rank"
 )
 
-// admechSectors lists the six admech-code role sectors in ManagedSlugs
+// admechSectors lists the seven admech-code role sectors in ManagedSlugs
 // order after the admech-code worker preset.
 var admechSectors = []rank.Sector{
 	admechOracle, admechReviewer, admechResearcher,
-	admechAuditor, admechDelegate, admechScout,
+	admechAuditor, admechDelegate, admechScout, admechVision,
 }
 
 func TestManagedSlugsExact(t *testing.T) {
@@ -24,6 +24,7 @@ func TestManagedSlugsExact(t *testing.T) {
 		"admech-code-auditor",
 		"admech-code-delegate",
 		"admech-code-scout",
+		"admech-code-vision",
 	}
 	if got := ManagedSlugs(); !slices.Equal(got, want) {
 		t.Errorf("ManagedSlugs() = %v, want %v", got, want)
@@ -132,6 +133,7 @@ func TestRequestManagedSlugs(t *testing.T) {
 		"admech-code-auditor":    "medium",
 		"admech-code-delegate":   "low",
 		"admech-code-scout":      "low",
+		"admech-code-vision":     "low",
 	}
 	for slug, wantEffort := range efforts {
 		system, params, ok := Request(slug)
@@ -200,11 +202,13 @@ func TestAdmechRoleSpecs(t *testing.T) {
 		admechAuditor:    auditorPrompt,
 		admechDelegate:   delegatePrompt,
 		admechScout:      scoutPrompt,
+		admechVision:     visionPrompt,
 	}
 	efforts := map[rank.Sector]string{
 		admechOracle: "high", admechReviewer: "high",
 		admechResearcher: "medium", admechAuditor: "medium",
 		admechDelegate: "low", admechScout: "low",
+		admechVision: "low",
 	}
 	seen := map[string]bool{}
 	for sec, want := range prompts {

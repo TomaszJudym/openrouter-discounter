@@ -1,4 +1,4 @@
-// admech.go holds the admech-code role presets: six per-role specs alongside
+// admech.go holds the admech-code role presets: seven per-role specs alongside
 // the admech-code worker preset (rank.Code, defined in preset.go, unchanged).
 package preset
 
@@ -10,11 +10,9 @@ import (
 	"github.com/tomaszjudym/openrouter-discounter/internal/rank"
 )
 
-// The admech-code role sectors. The contracted rank.Adm* constants carry
-// these exact string values and are added to internal/rank by the
-// integration step; until they land in this worktree these locals key the
-// Slugs and specs entries. rank.Sector is a string type, so the map keys
-// stay identical once the rank constants exist.
+// The admech-code role sectors. These locals mirror the exported
+// rank.Admech* constants (same string values) so the Slugs and specs maps
+// are keyed without importing rank's sector set.
 const (
 	admechOracle     rank.Sector = "admech-code-oracle"
 	admechReviewer   rank.Sector = "admech-code-reviewer"
@@ -22,6 +20,7 @@ const (
 	admechAuditor    rank.Sector = "admech-code-auditor"
 	admechDelegate   rank.Sector = "admech-code-delegate"
 	admechScout      rank.Sector = "admech-code-scout"
+	admechVision     rank.Sector = "admech-code-vision"
 )
 
 //go:embed oracle.txt
@@ -42,6 +41,9 @@ var delegatePromptFile string
 //go:embed scout.txt
 var scoutPromptFile string
 
+//go:embed vision.txt
+var visionPromptFile string
+
 // Role system prompts, one per admech-code preset.
 var (
 	oraclePrompt     = strings.TrimSpace(oraclePromptFile)
@@ -50,6 +52,7 @@ var (
 	auditorPrompt    = strings.TrimSpace(auditorPromptFile)
 	delegatePrompt   = strings.TrimSpace(delegatePromptFile)
 	scoutPrompt      = strings.TrimSpace(scoutPromptFile)
+	visionPrompt     = strings.TrimSpace(visionPromptFile)
 )
 
 // admechSpec is the spec style shared by the admech-code role presets: a

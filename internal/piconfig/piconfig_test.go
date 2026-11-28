@@ -212,7 +212,7 @@ func TestSurfaceRuleNoDarkbloomRow(t *testing.T) {
 // entry and no override: no broken references, no invented costs.
 func TestNoPricedRowSkipsSlug(t *testing.T) {
 	dir := t.TempDir()
-	// only the code sector has rows; the six admech-code-* slugs have none
+	// only the code sector has rows; the seven admech-code-* slugs have none
 	res := pipeline.Result{OpenRouter: []rank.SectorResult{sector("code", 0.4)}}
 	if _, err := Emit(dir, res); err != nil {
 		t.Fatal(err)
@@ -247,6 +247,7 @@ func TestGeneratedEntryShape(t *testing.T) {
 			sector("admech-code-auditor", 0.6),
 			sector("admech-code-delegate", 0.5),
 			sector("admech-code-scout", 0.2),
+			sector("admech-code-vision", 0.1),
 		},
 	}
 	if _, err := Emit(dir, res); err != nil {

@@ -357,6 +357,7 @@ ever writes or points an agent at:
 | `admech-code-auditor` | evidence-auditor |
 | `admech-code-delegate` | delegate |
 | `admech-code-scout` | scout |
+| `admech-code-vision` | — (companion looker, wire as an auxiliary like `hermes-vision`) |
 
 The list is the guard as well: `preset.UpdateManaged` refuses a preset write
 for any slug outside it (the daily tracker run still walks the ranked preset

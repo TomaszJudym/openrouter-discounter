@@ -133,6 +133,8 @@ var specs = map[rank.Sector]presetSpec{
 	admechAuditor:    admechSpec(auditorPrompt, "medium"),
 	admechDelegate:   admechSpec(delegatePrompt, "low"),
 	admechScout:      admechSpec(scoutPrompt, "low"),
+	// the looker only reports what it sees: low effort
+	admechVision: admechSpec(visionPrompt, "low"),
 }
 
 // effortFor is the spec's reasoning effort, defaulting to reasoningEffort.
@@ -167,10 +169,11 @@ var Slugs = map[rank.Sector]string{
 	admechAuditor:    "admech-code-auditor",
 	admechDelegate:   "admech-code-delegate",
 	admechScout:      "admech-code-scout",
+	admechVision:     "admech-code-vision",
 }
 
 // ManagedSlugs are the preset slugs the update path may write: the admech
-// presets (admech-code worker plus the six admech-code role presets).
+// presets (admech-code worker plus the seven admech-code role presets).
 // Everything else in Slugs stays for dbproxy compatibility but is not
 // updated by the run.
 func ManagedSlugs() []string {
@@ -182,6 +185,7 @@ func ManagedSlugs() []string {
 		"admech-code-auditor",
 		"admech-code-delegate",
 		"admech-code-scout",
+		"admech-code-vision",
 	}
 }
 

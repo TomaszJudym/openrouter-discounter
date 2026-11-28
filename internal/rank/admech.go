@@ -17,6 +17,7 @@ const (
 	AdmechAuditor    Sector = "admech-code-auditor"
 	AdmechDelegate   Sector = "admech-code-delegate"
 	AdmechScout      Sector = "admech-code-scout"
+	AdmechVision     Sector = "admech-code-vision"
 )
 
 // Role-context floors and the oracle's merged-source label.
@@ -41,10 +42,13 @@ var admechRoles = []role{
 	{AdmechDelegate, func(c candidate) bool { return c.model.ToolCalling() }, byCost},
 	// scout answers quick lookups: any pool model will do
 	{AdmechScout, func(c candidate) bool { return true }, byCost},
+	// looker is the admech family's vision companion (like hermes-vision):
+	// vision-only, ranked by cheapness so it exists even on zero-discount days
+	{AdmechVision, func(c candidate) bool { return c.model.Vision() }, byCost},
 }
 
 // SelectAdmech picks the top 3 models for each admech role, in role order
-// oracle, reviewer, researcher, auditor, delegate, scout. The pool and
+// oracle, reviewer, researcher, auditor, delegate, scout, looker. The pool and
 // endpoint re-picking follow SelectHermes: byDiscount roles draw from the
 // discounted rows and rank quality against discount depth; byCost roles
 // draw from every priced row and rank quality against absolute cheapness.
@@ -196,6 +200,11 @@ func admechScores(sec Sector, cands []candidate, scores map[Sector]SectorScores)
 			return src, cands, nil, err
 		}
 		return src, floorKept(cands, by, p50(mapValues(by))), by, ""
+	case AdmechVision:
+		// cheap mode: raw nil, no error, no quality floor — the LCR
+		// popularity floor is about long-context reasoning and must not
+		// gate a vision looker
+		return "", cands, nil, ""
 	case AdmechReviewer:
 		src, by, err, ok := roleSource(Code, cands, scores)
 		if !ok {

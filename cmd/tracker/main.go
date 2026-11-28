@@ -161,7 +161,7 @@ func logSide(side string, sectors []rank.SectorResult) {
 }
 
 // sectorBySlug is preset.Slugs inverted: the rank sector each managed
-// slug's rows live under. admech-code ranks in the code sector; the six
+// slug's rows live under. admech-code ranks in the code sector; the seven
 // admech-code-<role> sectors carry their slug as the sector name.
 var sectorBySlug = func() map[string]rank.Sector {
 	m := make(map[string]rank.Sector, len(preset.Slugs))

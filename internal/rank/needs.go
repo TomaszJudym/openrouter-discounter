@@ -55,6 +55,7 @@ var needs = map[Sector]Need{
 	AdmechAuditor:              {discounts.Require{Capped: true, MinContext: auditorMinCtx}, auditorWorkload},
 	AdmechDelegate:             {discounts.Require{Tools: true, Capped: true}, delegateWorkload},
 	AdmechScout:                {discounts.Require{Capped: true}, lightWorkload},
+	AdmechVision:               {discounts.Require{Vision: true, Capped: true}, visionWorkload},
 }
 
 // Need is the sector's endpoint requirement and workload.

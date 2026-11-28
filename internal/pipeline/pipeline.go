@@ -206,7 +206,7 @@ func fetchScores(ctx context.Context, hc *http.Client, models []discounts.Model,
 // allDiscs every discount (expensive-long ignores the ceilings), priced
 // every priced row (the byCost hermes and admech roles). report is the
 // Telegram ranking — the report sectors plus the strongest-discount pick;
-// presets every preset sector, including the six admech-code-<role> picks
+// presets every preset sector, including the seven admech-code-<role> picks
 // that never appear in the report. Every managed slug with candidates gets
 // its sector here, so preset updates never miss one.
 func selectSide(models []discounts.Model, discs, allDiscs, priced []discounts.Discount, free []rank.FreeModel, scores map[rank.Sector]rank.SectorScores, intel map[string]float64) (report rank.Result, presets []rank.SectorResult) {

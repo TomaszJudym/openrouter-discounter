@@ -353,7 +353,7 @@ func TestManagedSlugsServePresetRequest(t *testing.T) {
 }
 
 // TestBuildRoutesManagedSlugs: every managed slug gets a Darkbloom route
-// when its sector has picks (admech-code is the code sector; the six roles
+// when its sector has picks (admech-code is the code sector; the seven roles
 // carry the slug as their sector name).
 func TestBuildRoutesManagedSlugs(t *testing.T) {
 	row := rank.Row{ModelID: "v/a", Endpoint: discounts.DirectPrefix + "a-4bit",
@@ -361,7 +361,7 @@ func TestBuildRoutesManagedSlugs(t *testing.T) {
 	sectors := []rank.Sector{
 		rank.Code,
 		rank.AdmechOracle, rank.AdmechReviewer, rank.AdmechResearcher,
-		rank.AdmechAuditor, rank.AdmechDelegate, rank.AdmechScout,
+		rank.AdmechAuditor, rank.AdmechDelegate, rank.AdmechScout, rank.AdmechVision,
 	}
 	res := pipeline.Result{Direct: make([]rank.SectorResult, 0, len(sectors))}
 	for _, sec := range sectors {

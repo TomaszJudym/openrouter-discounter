@@ -380,6 +380,23 @@ func TestDryRunWritesNothing(t *testing.T) {
 	}
 }
 
+// TestDryRunCreatesNoDir checks a dry run against a missing agent dir is
+// write-free: it reports both files as would-change and leaves the dir
+// itself uncreated (the agent dir is created only when applying).
+func TestDryRunCreatesNoDir(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "absent", "agent")
+	out, err := DryRun(dir, fixture(0.4, 0.3))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !contains(out.Changed, modelsFile) || !contains(out.Changed, settingsFile) {
+		t.Fatalf("dry-run should report both files as would-change: %v", out.Changed)
+	}
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		t.Fatalf("dry-run created the agent dir: %v", err)
+	}
+}
+
 // TestDryRunThenEmitMatches checks the dry-run projection is exact: the
 // subsequent real emit changes exactly the files the dry-run named.
 func TestDryRunThenEmitMatches(t *testing.T) {

@@ -130,12 +130,16 @@ func Overrides(res pipeline.Result) map[string]string {
 
 // emit is Emit and DryRun. Picks with no priced row on either side are
 // skipped: no entry is generated and any existing entry and override are
-// left untouched (stale but working, never a broken reference).
+// left untouched (stale but working, never a broken reference). A dry run
+// (apply false) is write-free down to the agent dir, which it does not
+// create.
 func emit(dir string, res pipeline.Result, apply bool) (Result, error) {
 	ps := picks(res)
 
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return Result{}, fmt.Errorf("agent dir %s: %w", dir, err)
+	if apply {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			return Result{}, fmt.Errorf("agent dir %s: %w", dir, err)
+		}
 	}
 	var out Result
 	if err := emitModels(dir, ps, apply, &out); err != nil {

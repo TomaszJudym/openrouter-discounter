@@ -7,11 +7,13 @@ import (
 	"log"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 
+	"github.com/tomaszjudym/openrouter-discounter/internal/pipeline"
 	"github.com/tomaszjudym/openrouter-discounter/internal/preset"
 	"github.com/tomaszjudym/openrouter-discounter/internal/rank"
 )
@@ -220,31 +222,68 @@ func TestTelegramSenderRedactsSecretsInErrors(t *testing.T) {
 	}
 }
 
-// TestPiConfigDir: --pi-dir wins over $TRACKER_PIPRESETS, which wins over
-// the ~/.pi/agent default. The resolved dir is what piconfig.Emit writes
-// after a successful report send; it is outside the repo in every case.
+// TestPiConfigDir: --pi-dir wins over $TRACKER_PIPRESETS; both empty leave
+// the pi config surface off. There is no ~/.pi/agent default: run emits only
+// what piConfigDir names.
 func TestPiConfigDir(t *testing.T) {
 	prev := *piDir
 	t.Cleanup(func() { *piDir = prev })
-	home := t.TempDir()
-	t.Setenv("HOME", home)
+	base := t.TempDir()
 
 	*piDir = ""
 	t.Setenv("TRACKER_PIPRESETS", "")
-	if got, err := piConfigDir(); err != nil || got != filepath.Join(home, ".pi", "agent") {
-		t.Errorf("default dir = %q, %v; want %q", got, err, filepath.Join(home, ".pi", "agent"))
+	if got := piConfigDir(); got != "" {
+		t.Errorf("no flag, no env: dir = %q, want empty (pi config off)", got)
 	}
 
-	envDir := filepath.Join(home, "pi-from-env")
+	envDir := filepath.Join(base, "pi-from-env")
 	t.Setenv("TRACKER_PIPRESETS", envDir)
-	if got, err := piConfigDir(); err != nil || got != envDir {
-		t.Errorf("env dir = %q, %v; want %q", got, err, envDir)
+	if got := piConfigDir(); got != envDir {
+		t.Errorf("env dir = %q, want %q", got, envDir)
 	}
 
-	flagDir := filepath.Join(home, "pi-from-flag")
+	flagDir := filepath.Join(base, "pi-from-flag")
 	*piDir = flagDir
-	if got, err := piConfigDir(); err != nil || got != flagDir {
-		t.Errorf("flag dir = %q, %v; want %q", got, err, flagDir)
+	if got := piConfigDir(); got != flagDir {
+		t.Errorf("flag dir = %q, want %q", got, flagDir)
+	}
+}
+
+// TestPiConfigOptIn: without --pi-dir or $TRACKER_PIPRESETS run's gate skips
+// the emit, so nothing is created and no $HOME is needed; with --pi-dir the
+// emit writes both files into the flagged dir.
+func TestPiConfigOptIn(t *testing.T) {
+	prev := *piDir
+	t.Cleanup(func() { *piDir = prev })
+	base := t.TempDir()
+	res := pipeline.Result{OpenRouter: []rank.SectorResult{{
+		Sector: rank.Code,
+		Rows:   []rank.Row{{ModelID: "vendor/discounted", Endpoint: "prov/tag", Price: 0.4, Was: 0.8, Pct: -50}},
+	}}}
+
+	*piDir = ""
+	t.Setenv("TRACKER_PIPRESETS", "")
+	home := filepath.Join(base, "home")
+	t.Setenv("HOME", home)
+	if dir := piConfigDir(); dir != "" {
+		t.Fatalf("unrequested dir = %q, want empty", dir)
+	}
+	if _, err := os.Stat(home); !os.IsNotExist(err) {
+		t.Fatalf("default run created a dir under $HOME: %v", err)
+	}
+	if entries, err := os.ReadDir(base); err != nil || len(entries) != 0 {
+		t.Fatalf("default run touched %s: %v, %v", base, entries, err)
+	}
+
+	flagDir := filepath.Join(base, "pi-from-flag")
+	*piDir = flagDir
+	if err := emitPiConfig(piConfigDir(), res); err != nil {
+		t.Fatalf("emitPiConfig: %v", err)
+	}
+	for _, name := range []string{"models.json", "settings.json"} {
+		if _, err := os.Stat(filepath.Join(flagDir, name)); err != nil {
+			t.Errorf("--pi-dir emit did not write %s: %v", name, err)
+		}
 	}
 }
 

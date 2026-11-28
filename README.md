@@ -309,19 +309,33 @@ OpenRouter web chat sees only the OpenRouter side.
 ## Local pi-subagents integration
 
 The same selection that keeps the OpenRouter presets current also drives a
-local pi agent and its pi-subagents. `cmd/pipresets` rewrites the agent's
-`models.json` and `settings.json`; `cmd/dbproxy` (see Darkbloom above)
-serves the Darkbloom-direct picks on loopback. Both are optional: the GitHub
-Actions run needs neither, and neither writes anything into the repository.
+local pi agent and its pi-subagents. The tracker itself can rewrite the
+agent's `models.json` and `settings.json` after its preset updates, or
+`cmd/pipresets` can do it as a one-off; `cmd/dbproxy` (see Darkbloom above)
+serves the Darkbloom-direct picks on loopback. All of it is local and
+opt-in: the GitHub Actions run emits no pi config (the tracker's emit is
+off unless asked for), so it needs no agent dir, no `$HOME`, and writes
+nothing outside its own checkout.
 
 ### Presets for pi
 
+The tracker's emit is one gate: it runs only when `--pi-dir <dir>` or a
+non-empty `TRACKER_PIPRESETS` names the agent dir, and it runs after the
+preset updates (`TRACKER_REPORT=false` reruns included). With neither set
+nothing is written and no home dir is looked up, which is what CI relies
+on. `pipresets` is the standalone equivalent:
+
 ```sh
+TRACKER_PIPRESETS="$HOME/.pi/agent" go run ./cmd/tracker   # report + presets + pi config
+go run ./cmd/tracker --pi-dir "$HOME/.pi/agent"            # same emit, flag form
 go run ./cmd/pipresets --dry-run   # print the changes; write nothing
 go run ./cmd/pipresets             # write models.json and settings.json
 ```
 
-For each managed slug `pipresets` adds a `@preset/<slug>` model under the
+A failing emit exits the tracker nonzero (joined with any preset failure)
+but never costs the report: it runs after the Telegram send.
+
+For each managed slug the emit adds a `@preset/<slug>` model under the
 `openrouter` provider and the same id under the loopback `dbproxy` provider,
 with the cost derived from the winning row, then sets
 `subagents.agentOverrides` per builtin pi-subagents agent to
@@ -331,7 +345,7 @@ atomically and skipped when their content is unchanged, and no secret is
 written: the emitted key is the `$OPENROUTER_API_KEY` environment
 interpolation.
 
-Managed slugs (`internal/preset.ManagedSlugs`) — the only slugs `pipresets`
+Managed slugs (`internal/preset.ManagedSlugs`) — the only slugs the emit
 ever writes or points an agent at:
 
 | slug | pi-subagents agent |
@@ -357,6 +371,7 @@ is exported in the invoking shell (systemd: the optional `EnvironmentFile`).
 | variable | used by | default | meaning |
 | --- | --- | --- | --- |
 | `OPENROUTER_MANAGEMENT_KEY` | tracker | — | read-write management key; missing only skips the preset updates |
+| `TRACKER_PIPRESETS` | tracker, local-cron | — | pi agent dir; unset (and no `--pi-dir`) skips the pi config emit |
 | `AA_API_KEY` | tracker, pipresets, dbproxy | — | optional finance scores |
 | `DARKBLOOM_API_KEY` | tracker, pipresets, dbproxy | — | required by dbproxy; optional elsewhere |
 | `OPENROUTER_BASE_URL` | dbproxy | `https://openrouter.ai/api/v1` | upstream root |
@@ -364,9 +379,9 @@ is exported in the invoking shell (systemd: the optional `EnvironmentFile`).
 | `DBPROXY_ADDR` | dbproxy | `127.0.0.1:8787` | listen address; anything not loopback is refused |
 | `DBPROXY_REFRESH` | dbproxy | `2h` | re-discovery interval (Go duration) |
 
-`pipresets` emits the dbproxy provider as `http://127.0.0.1:8787/v1`, so run
-the proxy on its default address; the `DBPROXY_ADDR` / base-URL overrides are
-for staging and the e2e tests.
+`pipresets` (and the tracker's opt-in emit) writes the dbproxy provider as
+`http://127.0.0.1:8787/v1`, so run the proxy on its default address; the
+`DBPROXY_ADDR` / base-URL overrides are for staging and the e2e tests.
 
 ### The proxy as a user service
 
@@ -388,13 +403,23 @@ or write an equivalent LaunchAgent of your own.
 
 `scripts/local-cron.sh` is the local stand-in for the GitHub presets rerun:
 it runs the tracker with `TRACKER_REPORT=false` (presets only, no Telegram
-secrets, no message) and then `pipresets`, logging everything to stderr so a
-scheduler capture never picks up a half-written report.
+secrets, no message) and `TRACKER_PIPRESETS` pointing at `~/.pi/agent`
+(override it in the environment to write the config elsewhere). The tracker
+is the only writer: one pipeline run repoints the OpenRouter presets and
+emits the pi config, so the schedule runs no separate `pipresets` and fetches
+the selection once. Everything goes to stderr, so a scheduler capture never
+picks up a half-written report.
 
 ```sh
-scripts/local-cron.sh              # tracker presets, then pipresets
-scripts/local-cron.sh --dry-run    # pipresets writes nothing
+scripts/local-cron.sh              # presets + pi config, one tracker run
+scripts/local-cron.sh --dry-run    # no pi config written; pipresets --dry-run prints the changes
 ```
+
+`--dry-run` writes no pi config, and nothing at all under the agent dir: the
+tracker runs with `TRACKER_PIPRESETS` unset (its emit off), then
+`pipresets --dry-run --dir <dir>` prints the changes the emit would have made.
+Preset repointing is not a dry run, here or in the tracker: the presets are
+repointed either way.
 
 macOS (launchd, `StartInterval` 7200 s, run at load):
 

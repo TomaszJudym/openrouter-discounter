@@ -13,7 +13,6 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -31,9 +30,11 @@ const (
 	sendTimeout = 60 * time.Second
 )
 
-// piDir is the pi agent dir rewritten after a successful report send;
-// empty falls back to $TRACKER_PIPRESETS, then ~/.pi/agent.
-var piDir = flag.String("pi-dir", "", "pi agent dir to update after the report (default $TRACKER_PIPRESETS or ~/.pi/agent)")
+// piDir is the pi agent dir rewritten after a successful preset update;
+// empty falls back to $TRACKER_PIPRESETS. Both empty keep the pi config
+// surface off: the Actions run has no agent dir of its own and must not
+// write into the runner home.
+var piDir = flag.String("pi-dir", "", "pi agent dir to update after the report (default $TRACKER_PIPRESETS; both empty skip the pi config)")
 
 func main() {
 	flag.Parse()
@@ -91,41 +92,36 @@ func run() error {
 	}
 	// Presets update after the Telegram send, so a failure here never costs
 	// the report, but it fails the run so CI shows it. The local pi config
-	// is a separate surface: a preset failure must not skip it.
+	// is a separate surface: a preset failure must not skip it. It stays off
+	// unless --pi-dir or $TRACKER_PIPRESETS asks for it.
 	var errs []error
 	if err := updatePresets(ctx, hc, res.OpenRouter); err != nil {
 		errs = append(errs, err)
 	}
-	if err := emitPiConfig(res); err != nil {
-		errs = append(errs, err)
+	if dir := piConfigDir(); dir != "" {
+		if err := emitPiConfig(dir, res); err != nil {
+			errs = append(errs, err)
+		}
 	}
 	return errors.Join(errs...)
 }
 
-// piConfigDir resolves where piconfig.Emit writes after a successful report
-// send: the --pi-dir flag, then $TRACKER_PIPRESETS, then ~/.pi/agent.
-func piConfigDir() (string, error) {
+// piConfigDir resolves the opt-in pi config surface: the --pi-dir flag, then
+// $TRACKER_PIPRESETS. Empty means no emit at all. There is deliberately no
+// home-dir default: ~/.pi/agent does not exist on a CI runner, and creating
+// it there is a write outside the repo that can fail the run when $HOME is
+// unset.
+func piConfigDir() string {
 	if *piDir != "" {
-		return *piDir, nil
+		return *piDir
 	}
-	if dir := os.Getenv("TRACKER_PIPRESETS"); dir != "" {
-		return dir, nil
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", fmt.Errorf("home dir: %w", err)
-	}
-	return filepath.Join(home, ".pi", "agent"), nil
+	return os.Getenv("TRACKER_PIPRESETS")
 }
 
 // emitPiConfig merge-writes the local pi agent's models.json and
-// settings.json (see internal/piconfig). It runs in every report and
-// presets-only run alike; the pi agent dir is outside the repo.
-func emitPiConfig(res pipeline.Result) error {
-	dir, err := piConfigDir()
-	if err != nil {
-		return err
-	}
+// settings.json (see internal/piconfig) into dir. run calls it only when
+// piConfigDir named a dir; the pi agent dir is outside the repo.
+func emitPiConfig(dir string, res pipeline.Result) error {
 	out, err := piconfig.Emit(dir, res)
 	if err != nil {
 		return fmt.Errorf("pi config: %w", err)

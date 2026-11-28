@@ -12,9 +12,11 @@
 //	--dry-run  print what would change, write nothing
 //
 // Environment: DARKBLOOM_API_KEY optional (no key: every pick routes to
-// openrouter), AA_API_KEY optional (finance scores). No other key is read:
-// the written API key is the "$OPENROUTER_API_KEY" interpolation pi resolves
-// from its own environment.
+// openrouter), AA_API_KEY optional (finance scores), OPENROUTER_BASE_URL and
+// DARKBLOOM_BASE_URL optional (default the production roots; override for a
+// staging stack or a local end-to-end test, same names as cmd/dbproxy). No
+// other key is read: the written API key is the "$OPENROUTER_API_KEY"
+// interpolation pi resolves from its own environment.
 package main
 
 import (
@@ -29,6 +31,7 @@ import (
 	"slices"
 	"time"
 
+	"github.com/tomaszjudym/openrouter-discounter/internal/fetch"
 	"github.com/tomaszjudym/openrouter-discounter/internal/piconfig"
 	"github.com/tomaszjudym/openrouter-discounter/internal/pipeline"
 )
@@ -50,7 +53,10 @@ func run() error {
 	dryRun := flag.Bool("dry-run", false, "print what would change, write nothing")
 	flag.Parse()
 
-	hc := &http.Client{Timeout: 60 * time.Second}
+	hc, err := fetch.EnvClient(&http.Client{Timeout: 60 * time.Second})
+	if err != nil {
+		return err
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), runTimeout)
 	defer cancel()
 	res, err := pipeline.Run(ctx, hc, pipeline.Keys{

@@ -21,6 +21,19 @@
 #   would make. Preset repointing is not a dry run, here or in the tracker.
 set -eu
 
+# Secrets live in the interactive shell config; a scheduler's environment
+# usually lacks them. Source ~/.zshrc inside a real zsh so its syntax is
+# honoured, and bring back only the four keys the tracker needs. Existing
+# environment values win, so a dedicated env file (systemd EnvironmentFile)
+# can override this.
+if command -v zsh >/dev/null 2>&1; then
+	# shellcheck disable=SC2016
+	eval "$(zsh -c 'source ~/.zshrc >/dev/null 2>&1; for v in OPENROUTER_MANAGEMENT_API_KEY OPENROUTER_API_KEY DARKBLOOM_API_KEY AA_API_KEY; do typeset -p $v 2>/dev/null; done' 2>/dev/null | sed 's/^typeset /export /')" || true
+fi
+# The tracker reads OPENROUTER_MANAGEMENT_KEY; ~/.zshrc historically exports
+# OPENROUTER_MANAGEMENT_API_KEY. Map whichever name is present.
+[ -n "${OPENROUTER_MANAGEMENT_API_KEY:-}" ] && [ -z "${OPENROUTER_MANAGEMENT_KEY:-}" ] && export OPENROUTER_MANAGEMENT_KEY="$OPENROUTER_MANAGEMENT_API_KEY"
+
 unset CDPATH
 root=$(cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$root"

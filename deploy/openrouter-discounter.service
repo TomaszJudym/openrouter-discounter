@@ -1,0 +1,12 @@
+[Unit]
+Description=OpenRouter discount tracker: repoint presets and the local pi agent
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=__REPO__
+# Optional KEY=VALUE file (mode 600, never committed): OPENROUTER_MANAGEMENT_KEY,
+# AA_API_KEY, DARKBLOOM_API_KEY. The leading '-' keeps a missing file fatal-free.
+EnvironmentFile=-%h/.config/openrouter-discounter/env
+ExecStart=__REPO__/scripts/local-cron.sh

@@ -296,9 +296,141 @@ with that `base_url` in place of `provider: openrouter`. Per request:
   `X-Dbproxy-Route` response header names the backend used.
 
 Picks are recomputed at start (about a minute; until then every request goes
-to OpenRouter) and every 2 h, held in memory only. Tool calls, streamed tool
+to OpenRouter) and every `DBPROXY_REFRESH` (default 2 h), held in memory
+only: each run builds a new route table and swaps it in whole, so requests
+served during a refresh keep the previous table and a failed run leaves it
+unchanged. `OPENROUTER_BASE_URL`, `DARKBLOOM_BASE_URL`, `DBPROXY_ADDR` and
+`DBPROXY_REFRESH` override the production defaults (staging, tests); the
+local services are covered in [Local pi-subagents
+integration](#local-pi-subagents-integration). Tool calls, streamed tool
 calls and tool results work on Darkbloom (verified 2026-11-27). The
 OpenRouter web chat sees only the OpenRouter side.
+
+## Local pi-subagents integration
+
+The same selection that keeps the OpenRouter presets current also drives a
+local pi agent and its pi-subagents. `cmd/pipresets` rewrites the agent's
+`models.json` and `settings.json`; `cmd/dbproxy` (see Darkbloom above)
+serves the Darkbloom-direct picks on loopback. Both are optional: the GitHub
+Actions run needs neither, and neither writes anything into the repository.
+
+### Presets for pi
+
+```sh
+go run ./cmd/pipresets --dry-run   # print the changes; write nothing
+go run ./cmd/pipresets             # write models.json and settings.json
+```
+
+For each managed slug `pipresets` adds a `@preset/<slug>` model under the
+`openrouter` provider and the same id under the loopback `dbproxy` provider,
+with the cost derived from the winning row, then sets
+`subagents.agentOverrides` per builtin pi-subagents agent to
+`dbproxy/@preset/<slug>` or `openrouter/@preset/<slug>`, whichever surface's
+top row is cheaper. Merge-writes keep unmanaged keys, files are written
+atomically and skipped when their content is unchanged, and no secret is
+written: the emitted key is the `$OPENROUTER_API_KEY` environment
+interpolation.
+
+Managed slugs (`internal/preset.ManagedSlugs`) — the only slugs `pipresets`
+ever writes or points an agent at:
+
+| slug | pi-subagents agent |
+| --- | --- |
+| `admech-code` | worker |
+| `admech-code-oracle` | oracle |
+| `admech-code-reviewer` | reviewer |
+| `admech-code-researcher` | researcher |
+| `admech-code-auditor` | evidence-auditor |
+| `admech-code-delegate` | delegate |
+| `admech-code-scout` | scout |
+
+The list is the guard as well: `preset.UpdateManaged` refuses a preset write
+for any slug outside it (the daily tracker run still walks the ranked preset
+sectors it reports).
+
+### Environment keys
+
+Secrets are read from the environment only; nothing is written down or
+logged. `scripts/local-cron.sh` and the deploy units below rely on whatever
+is exported in the invoking shell (systemd: the optional `EnvironmentFile`).
+
+| variable | used by | default | meaning |
+| --- | --- | --- | --- |
+| `OPENROUTER_MANAGEMENT_KEY` | tracker | — | read-write management key; missing only skips the preset updates |
+| `AA_API_KEY` | tracker, pipresets, dbproxy | — | optional finance scores |
+| `DARKBLOOM_API_KEY` | tracker, pipresets, dbproxy | — | required by dbproxy; optional elsewhere |
+| `OPENROUTER_BASE_URL` | dbproxy | `https://openrouter.ai/api/v1` | upstream root |
+| `DARKBLOOM_BASE_URL` | dbproxy | `https://api.darkbloom.dev/v1` | upstream root |
+| `DBPROXY_ADDR` | dbproxy | `127.0.0.1:8787` | listen address; anything not loopback is refused |
+| `DBPROXY_REFRESH` | dbproxy | `2h` | re-discovery interval (Go duration) |
+
+`pipresets` emits the dbproxy provider as `http://127.0.0.1:8787/v1`, so run
+the proxy on its default address; the `DBPROXY_ADDR` / base-URL overrides are
+for staging and the e2e tests.
+
+### The proxy as a user service
+
+dbproxy holds the Darkbloom key and forwards the client's OpenRouter key, so
+it binds loopback only and refuses any other `DBPROXY_ADDR`. Run it in your
+own user session, not as a root or system-wide service. Linux, a transient
+user unit that takes the keys from the invoking shell:
+
+```sh
+systemd-run --user --unit openrouter-dbproxy --working-directory "$PWD" \
+  --setenv DARKBLOOM_API_KEY="$DARKBLOOM_API_KEY" \
+  --setenv AA_API_KEY="$AA_API_KEY" go run ./cmd/dbproxy
+```
+
+macOS: keep it in a login shell (`DARKBLOOM_API_KEY=… go run ./cmd/dbproxy`)
+or write an equivalent LaunchAgent of your own.
+
+### Local cron every 2 h
+
+`scripts/local-cron.sh` is the local stand-in for the GitHub presets rerun:
+it runs the tracker with `TRACKER_REPORT=false` (presets only, no Telegram
+secrets, no message) and then `pipresets`, logging everything to stderr so a
+scheduler capture never picks up a half-written report.
+
+```sh
+scripts/local-cron.sh              # tracker presets, then pipresets
+scripts/local-cron.sh --dry-run    # pipresets writes nothing
+```
+
+macOS (launchd, `StartInterval` 7200 s, run at load):
+
+```sh
+sed -e "s#__REPO__#$PWD#g" -e "s#__HOME__#$HOME#g" \
+  deploy/com.openrouter-discounter.plist \
+  > ~/Library/LaunchAgents/com.openrouter-discounter.plist
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.openrouter-discounter.plist
+```
+
+Linux (systemd user units, `OnUnitActiveSec=2h` after a 2 min first run):
+
+```sh
+mkdir -p ~/.config/systemd/user ~/.config/openrouter-discounter
+sed "s#__REPO__#$PWD#g" deploy/openrouter-discounter.service \
+  > ~/.config/systemd/user/openrouter-discounter.service
+cp deploy/openrouter-discounter.timer ~/.config/systemd/user/
+install -m 600 /dev/null ~/.config/openrouter-discounter/env   # KEY=VALUE, then fill in
+systemctl --user daemon-reload
+systemctl --user enable --now openrouter-discounter.timer
+```
+
+The timer's first run is 2 minutes after the user manager starts, then every
+2 hours after the previous run finishes; the launchd agent runs at load and
+every 2 hours. Plain cron works too:
+
+```cron
+0 */2 * * * $HOME/src/openrouter-discounter/scripts/local-cron.sh 2>>/tmp/openrouter-discounter.log
+```
+
+Refresh cadence: dbproxy re-discovers and swaps its routes every
+`DBPROXY_REFRESH` (2 h); the local cron, launchd agent and systemd timer
+repoint the OpenRouter presets and the pi config on the same 2 h cadence.
+They are independent of the GitHub Actions schedule and safe to run
+concurrently with it — every run recomputes from that moment's API prices
+and persists nothing.
 
 ## Development
 

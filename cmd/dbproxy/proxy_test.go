@@ -8,12 +8,14 @@ import (
 	"log"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
 
 	"github.com/tomaszjudym/openrouter-discounter/internal/discounts"
 	"github.com/tomaszjudym/openrouter-discounter/internal/pipeline"
+	"github.com/tomaszjudym/openrouter-discounter/internal/preset"
 	"github.com/tomaszjudym/openrouter-discounter/internal/rank"
 )
 
@@ -313,4 +315,67 @@ func TestBuildRoutesCheaperSideFirst(t *testing.T) {
 func TestMain(m *testing.M) {
 	log.SetOutput(io.Discard)
 	m.Run()
+}
+
+// TestManagedSlugsServePresetRequest: every managed slug has a
+// preset.Request injection, and a routed managed slug gets it on the
+// Darkbloom side: the role prompt goes first and the preset parameters fill
+// what the client left out.
+func TestManagedSlugsServePresetRequest(t *testing.T) {
+	for _, slug := range preset.ManagedSlugs() {
+		if _, _, ok := preset.Request(slug); !ok {
+			t.Errorf("%s: no preset.Request injection", slug)
+		}
+	}
+	or := newUpstream(t, map[string]reply{"@preset/admech-code-oracle": {status: 200, body: okJSON}})
+	db := newUpstream(t, map[string]reply{"m1": {status: 200, body: okJSON}})
+	p := newProxy(t, or, db, routes{"admech-code-oracle": {direct: []string{"m1"}, dbFirst: true}})
+	rec := post(t, p, `{"model":"@preset/admech-code-oracle","messages":[{"role":"user","content":"pick a transport?"}]} `)
+	if rec.Code != 200 || rec.Header().Get(routeHeader) != "darkbloom/m1" {
+		t.Fatalf("got %d via %q, want 200 via darkbloom/m1", rec.Code, rec.Header().Get(routeHeader))
+	}
+	got := db.got[0].body
+	msgs, ok := got["messages"].([]any)
+	if !ok || len(msgs) != 2 {
+		t.Fatalf("messages = %v, want the oracle prompt and the client's message", got["messages"])
+	}
+	sys, _ := msgs[0].(map[string]any)["content"].(string)
+	if !strings.HasPrefix(sys, "You are the oracle role") {
+		t.Errorf("system prompt = %q, want the oracle role prompt first", sys)
+	}
+	reasoning, _ := got["reasoning"].(map[string]any)
+	if reasoning["effort"] != "high" {
+		t.Errorf("reasoning = %v, want the preset's high effort", got["reasoning"])
+	}
+	if _, sent := got["provider"]; sent {
+		t.Errorf("provider routing sent to Darkbloom: %v", got["provider"])
+	}
+}
+
+// TestBuildRoutesManagedSlugs: every managed slug gets a Darkbloom route
+// when its sector has picks (admech-code is the code sector; the six roles
+// carry the slug as their sector name).
+func TestBuildRoutesManagedSlugs(t *testing.T) {
+	row := rank.Row{ModelID: "v/a", Endpoint: discounts.DirectPrefix + "a-4bit",
+		Serves: []string{discounts.DirectPrefix + "a-4bit"}, Price: 0.05, Scored: true, Score: 50}
+	sectors := []rank.Sector{
+		rank.Code,
+		rank.AdmechOracle, rank.AdmechReviewer, rank.AdmechResearcher,
+		rank.AdmechAuditor, rank.AdmechDelegate, rank.AdmechScout,
+	}
+	res := pipeline.Result{Direct: make([]rank.SectorResult, 0, len(sectors))}
+	for _, sec := range sectors {
+		res.Direct = append(res.Direct, rank.SectorResult{Sector: sec, Rows: []rank.Row{row}})
+	}
+	rt := buildRoutes(res)
+	for _, slug := range preset.ManagedSlugs() {
+		r, ok := rt[slug]
+		if !ok {
+			t.Errorf("%s has no Darkbloom route", slug)
+			continue
+		}
+		if !r.dbFirst || !slices.Equal(r.direct, []string{"a-4bit"}) {
+			t.Errorf("%s = %+v, want darkbloom first with the pick", slug, r)
+		}
+	}
 }

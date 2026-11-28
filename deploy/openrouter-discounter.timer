@@ -1,0 +1,12 @@
+[Unit]
+Description=Re-run the local OpenRouter discount cron every 2 h
+
+[Timer]
+# First run shortly after the user manager starts, then 2 h after each run
+# finishes, so a slow run is never stacked on itself.
+OnActiveSec=2min
+OnUnitActiveSec=2h
+Unit=openrouter-discounter.service
+
+[Install]
+WantedBy=timers.target

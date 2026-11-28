@@ -8,14 +8,17 @@ package main
 import (
 	"context"
 	"errors"
+	"flag"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/tomaszjudym/openrouter-discounter/internal/format"
+	"github.com/tomaszjudym/openrouter-discounter/internal/piconfig"
 	"github.com/tomaszjudym/openrouter-discounter/internal/pipeline"
 	"github.com/tomaszjudym/openrouter-discounter/internal/preset"
 	"github.com/tomaszjudym/openrouter-discounter/internal/rank"
@@ -28,7 +31,12 @@ const (
 	sendTimeout = 60 * time.Second
 )
 
+// piDir is the pi agent dir rewritten after a successful report send;
+// empty falls back to $TRACKER_PIPRESETS, then ~/.pi/agent.
+var piDir = flag.String("pi-dir", "", "pi agent dir to update after the report (default $TRACKER_PIPRESETS or ~/.pi/agent)")
+
 func main() {
+	flag.Parse()
 	if err := run(); err != nil {
 		log.Fatalf("tracker: %v", err)
 	}
@@ -82,8 +90,50 @@ func run() error {
 		}
 	}
 	// Presets update after the Telegram send, so a failure here never costs
-	// the report, but it fails the run so CI shows it.
-	return updatePresets(ctx, hc, res.OpenRouter)
+	// the report, but it fails the run so CI shows it. The local pi config
+	// is a separate surface: a preset failure must not skip it.
+	var errs []error
+	if err := updatePresets(ctx, hc, res.OpenRouter); err != nil {
+		errs = append(errs, err)
+	}
+	if err := emitPiConfig(res); err != nil {
+		errs = append(errs, err)
+	}
+	return errors.Join(errs...)
+}
+
+// piConfigDir resolves where piconfig.Emit writes after a successful report
+// send: the --pi-dir flag, then $TRACKER_PIPRESETS, then ~/.pi/agent.
+func piConfigDir() (string, error) {
+	if *piDir != "" {
+		return *piDir, nil
+	}
+	if dir := os.Getenv("TRACKER_PIPRESETS"); dir != "" {
+		return dir, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("home dir: %w", err)
+	}
+	return filepath.Join(home, ".pi", "agent"), nil
+}
+
+// emitPiConfig merge-writes the local pi agent's models.json and
+// settings.json (see internal/piconfig). It runs in every report and
+// presets-only run alike; the pi agent dir is outside the repo.
+func emitPiConfig(res pipeline.Result) error {
+	dir, err := piConfigDir()
+	if err != nil {
+		return err
+	}
+	out, err := piconfig.Emit(dir, res)
+	if err != nil {
+		return fmt.Errorf("pi config: %w", err)
+	}
+	if len(out.Changed) > 0 {
+		log.Printf("pi config %s: wrote %v", dir, out.Changed)
+	}
+	return nil
 }
 
 // logDirect logs the Darkbloom-direct rows preset.Picks routes per preset:
@@ -114,24 +164,48 @@ func logSide(side string, sectors []rank.SectorResult) {
 	}
 }
 
-// updatePresets points each category's preset at its top 3 models: the
-// admech-* presets follow the discounted rankings; expensive-long follows
-// the strongest discounted thinking models, deepest discount first;
-// strongest-discount-* presets route to the top-3 strongest-thinking
-// discounted chat models (same models, distinct personas). Every preset is
-// attempted; the failures are joined into the returned error so the run
-// exits nonzero. A missing key only skips the updates.
+// sectorBySlug is preset.Slugs inverted: the rank sector each managed
+// slug's rows live under. admech-code ranks in the code sector; the six
+// admech-code-<role> sectors carry their slug as the sector name.
+var sectorBySlug = func() map[string]rank.Sector {
+	m := make(map[string]rank.Sector, len(preset.Slugs))
+	for sec, slug := range preset.Slugs {
+		m[slug] = sec
+	}
+	return m
+}()
+
+// updatePresets points exactly the managed presets (preset.ManagedSlugs)
+// at their top 3 rows via UpdateManaged. Every managed slug is attempted,
+// even one without candidates today (UpdateManaged is then a no-op); a
+// legacy preset such as admech-math or hermes-* is never touched. The
+// failures are joined into the returned error so the run exits nonzero. A
+// missing key only skips the updates.
 func updatePresets(ctx context.Context, hc *http.Client, sectors []rank.SectorResult) error {
 	key := os.Getenv("OPENROUTER_MANAGEMENT_KEY")
 	if key == "" {
 		log.Printf("OPENROUTER_MANAGEMENT_KEY not set; presets not updated")
 		return nil
 	}
-	pc := preset.New(hc, key)
-	var errs []error
+	bySlug := make(map[string]rank.SectorResult, len(sectors))
 	for _, sr := range sectors {
-		slug := preset.Slugs[sr.Sector]
-		updated, err := pc.Update(ctx, sr)
+		if slug, ok := preset.Slugs[sr.Sector]; ok {
+			bySlug[slug] = sr
+		}
+	}
+	pc := preset.New(hc, key)
+	managed := preset.ManagedSlugs()
+	var errs []error
+	for _, slug := range managed {
+		sr, ok := bySlug[slug]
+		if !ok {
+			sec, found := sectorBySlug[slug]
+			if !found {
+				continue
+			}
+			sr = rank.SectorResult{Sector: sec}
+		}
+		updated, err := pc.UpdateManaged(ctx, sr)
 		if err != nil {
 			log.Printf("preset %s: %v", slug, err)
 			errs = append(errs, fmt.Errorf("preset %s: %w", slug, err))
@@ -142,7 +216,7 @@ func updatePresets(ctx context.Context, hc *http.Client, sectors []rank.SectorRe
 		}
 	}
 	if len(errs) > 0 {
-		return fmt.Errorf("%d of %d preset updates failed: %w", len(errs), len(sectors), errors.Join(errs...))
+		return fmt.Errorf("%d of %d preset updates failed: %w", len(errs), len(managed), errors.Join(errs...))
 	}
 	return nil
 }

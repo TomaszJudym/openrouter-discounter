@@ -28,6 +28,7 @@ import (
 	"strings"
 
 	"github.com/tomaszjudym/openrouter-discounter/internal/pipeline"
+	"github.com/tomaszjudym/openrouter-discounter/internal/preset"
 	"github.com/tomaszjudym/openrouter-discounter/internal/rank"
 )
 
@@ -35,31 +36,16 @@ import (
 // entries from the user's and replace only its own.
 const managedBy = "openrouter-discounter"
 
-// managedSlugs are the preset slugs pipresets keeps pointed at the best
-// deal. Local copy of preset.ManagedSlugs() while the slug list and the six
-// admech-code-* sectors are still landing upstream; integration switches to
-// preset.ManagedSlugs().
-var managedSlugs = []string{
-	"admech-code",
-	"admech-code-oracle",
-	"admech-code-reviewer",
-	"admech-code-researcher",
-	"admech-code-auditor",
-	"admech-code-delegate",
-	"admech-code-scout",
-}
-
-// orSector maps a managed slug to the rank sector string its OpenRouter rows
-// are listed under. The six admech-code-* sectors carry the slug as their
-// own sector name (sector string == slug string); admech-code ranks in the
-// existing code sector. The "code" entry is the pending-upstream seam:
-// integration looks the sector up through preset.Slugs instead.
+// orSector maps a managed slug to the rank sector string its rows are
+// listed under: preset.Slugs inverted. admech-code ranks in the existing
+// code sector; the six admech-code-* sectors carry the slug as their own
+// sector name. Both sides (OpenRouter and Darkbloom-direct) use the same
+// sector layout.
 var orSector = func() map[string]string {
-	m := make(map[string]string, len(managedSlugs))
-	for _, s := range managedSlugs {
-		m[s] = s
+	m := make(map[string]string, len(preset.Slugs))
+	for sec, slug := range preset.Slugs {
+		m[slug] = string(sec)
 	}
-	m["admech-code"] = "code"
 	return m
 }()
 
@@ -166,10 +152,12 @@ func emit(dir string, res pipeline.Result, apply bool) (Result, error) {
 // winner; otherwise the OpenRouter row wins. A slug with rows on neither
 // side is dropped.
 func picks(res pipeline.Result) map[string]Pick {
-	ps := make(map[string]Pick, len(managedSlugs))
-	for _, slug := range managedSlugs {
-		or, hasOR := topRow(res.OpenRouter, orSector[slug])
-		db, hasDB := topRow(res.Direct, slug)
+	slugs := preset.ManagedSlugs()
+	ps := make(map[string]Pick, len(slugs))
+	for _, slug := range slugs {
+		sector := orSector[slug]
+		or, hasOR := topRow(res.OpenRouter, sector)
+		db, hasDB := topRow(res.Direct, sector)
 		var viaDB bool
 		var row rank.Row
 		switch {
@@ -253,7 +241,7 @@ func emitModels(dir string, ps map[string]Pick, apply bool, out *Result) error {
 	// entriesBySlug keeps only the managed entries replaced this run; a
 	// slug with no pick today keeps its stale entry instead of losing it.
 	stale := managedEntries(providers)
-	for _, slug := range managedSlugs {
+	for _, slug := range preset.ManagedSlugs() {
 		p, ok := ps[slug]
 		if !ok {
 			continue
@@ -323,7 +311,7 @@ func managedEntries(providers map[string]any) map[string]map[string]any {
 // toSlug is the slug of a managed "@preset/<slug>" id.
 func toSlug(id string) (string, bool) {
 	s, ok := strings.CutPrefix(id, presetPrefix)
-	if !ok || !slices.Contains(managedSlugs, s) {
+	if !ok || !slices.Contains(preset.ManagedSlugs(), s) {
 		return "", false
 	}
 	return s, true

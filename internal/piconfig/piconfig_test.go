@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/tomaszjudym/openrouter-discounter/internal/pipeline"
+	"github.com/tomaszjudym/openrouter-discounter/internal/preset"
 	"github.com/tomaszjudym/openrouter-discounter/internal/rank"
 )
 
@@ -21,11 +22,12 @@ func sector(name string, price float64) rank.SectorResult {
 }
 
 // fixture is a pipeline.Result with an OpenRouter code row at orPrice and,
-// when dbPrice is set, a Darkbloom-direct admech-code row at dbPrice.
+// when dbPrice is set, a Darkbloom-direct code row at dbPrice. The code
+// sector is the admech-code preset on both sides (preset.Slugs).
 func fixture(orPrice, dbPrice float64) pipeline.Result {
 	res := pipeline.Result{OpenRouter: []rank.SectorResult{sector("code", orPrice)}}
 	if dbPrice >= 0 {
-		res.Direct = []rank.SectorResult{sector("admech-code", dbPrice)}
+		res.Direct = []rank.SectorResult{sector("code", dbPrice)}
 	}
 	return res
 }
@@ -273,7 +275,7 @@ func checkShape(t *testing.T, models map[string]any) {
 	if _, ok := worker["reasoning"]; ok {
 		t.Fatal("worker entry must not claim reasoning")
 	}
-	for _, slug := range managedSlugs {
+	for _, slug := range preset.ManagedSlugs() {
 		entry := findEntry(t, models, "openrouter", "@preset/"+slug)
 		if got, _ := entry["managedBy"].(string); got != managedBy {
 			t.Fatalf("%s entry missing managedBy marker: %v", slug, entry)
@@ -284,7 +286,7 @@ func checkShape(t *testing.T, models map[string]any) {
 // checkDBProxyProvider asserts the loopback provider block and its ids.
 func checkDBProxyProvider(t *testing.T, models map[string]any) {
 	t.Helper()
-	for _, slug := range managedSlugs {
+	for _, slug := range preset.ManagedSlugs() {
 		if ids := modelIDs(t, models, "dbproxy"); !contains(ids, "@preset/"+slug) {
 			t.Fatalf("dbproxy provider missing @preset/%s: %v", slug, ids)
 		}

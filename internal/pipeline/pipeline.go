@@ -204,13 +204,18 @@ func fetchScores(ctx context.Context, hc *http.Client, models []discounts.Model,
 
 // selectSide ranks one backend's rows: discs are the affordable discounts,
 // allDiscs every discount (expensive-long ignores the ceilings), priced
-// every priced row (the byCost hermes roles). report is the Telegram
-// ranking — the report sectors plus the strongest-discount pick; presets
-// every preset sector.
+// every priced row (the byCost hermes and admech roles). report is the
+// Telegram ranking — the report sectors plus the strongest-discount pick;
+// presets every preset sector, including the six admech-code-<role> picks
+// that never appear in the report. Every managed slug with candidates gets
+// its sector here, so preset updates never miss one.
 func selectSide(models []discounts.Model, discs, allDiscs, priced []discounts.Discount, free []rank.FreeModel, scores map[rank.Sector]rank.SectorScores, intel map[string]float64) (report rank.Result, presets []rank.SectorResult) {
 	report = rank.ByScores(discs, free, scores)
 	presets = slices.Clone(report.Sectors)
 	presets = append(presets, rank.SelectExpensiveLong(models, allDiscs))
+	// The role sectors come from the same side's rows (darkbloom-direct
+	// rows carry db: endpoints), so cmd/dbproxy can route them too.
+	presets = append(presets, rank.SelectAdmech(models, discs, priced, scores)...)
 	if len(intel) == 0 {
 		return report, presets
 	}

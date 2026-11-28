@@ -7,10 +7,12 @@ import (
 	"log"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 
+	"github.com/tomaszjudym/openrouter-discounter/internal/preset"
 	"github.com/tomaszjudym/openrouter-discounter/internal/rank"
 )
 
@@ -218,6 +220,34 @@ func TestTelegramSenderRedactsSecretsInErrors(t *testing.T) {
 	}
 }
 
+// TestPiConfigDir: --pi-dir wins over $TRACKER_PIPRESETS, which wins over
+// the ~/.pi/agent default. The resolved dir is what piconfig.Emit writes
+// after a successful report send; it is outside the repo in every case.
+func TestPiConfigDir(t *testing.T) {
+	prev := *piDir
+	t.Cleanup(func() { *piDir = prev })
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	*piDir = ""
+	t.Setenv("TRACKER_PIPRESETS", "")
+	if got, err := piConfigDir(); err != nil || got != filepath.Join(home, ".pi", "agent") {
+		t.Errorf("default dir = %q, %v; want %q", got, err, filepath.Join(home, ".pi", "agent"))
+	}
+
+	envDir := filepath.Join(home, "pi-from-env")
+	t.Setenv("TRACKER_PIPRESETS", envDir)
+	if got, err := piConfigDir(); err != nil || got != envDir {
+		t.Errorf("env dir = %q, %v; want %q", got, err, envDir)
+	}
+
+	flagDir := filepath.Join(home, "pi-from-flag")
+	*piDir = flagDir
+	if got, err := piConfigDir(); err != nil || got != flagDir {
+		t.Errorf("flag dir = %q, %v; want %q", got, err, flagDir)
+	}
+}
+
 func TestLogDirect(t *testing.T) {
 	rows := func(ids ...string) []rank.Row {
 		out := make([]rank.Row, len(ids))
@@ -315,10 +345,10 @@ func TestUpdatePresetsSkipsUnscored(t *testing.T) {
 func TestUpdatePresetsPointsAtTopModels(t *testing.T) {
 	t.Setenv("OPENROUTER_MANAGEMENT_KEY", "or-mgmt-key")
 	s, hc := newStubAPI(t, map[string]stubReply{
-		"GET /api/v1/presets/admech-math":                   {status: http.StatusNotFound, body: "{}"},
-		"POST /api/v1/presets/admech-math/chat/completions": {status: http.StatusOK, body: "{}"},
+		"GET /api/v1/presets/admech-code":                   {status: http.StatusNotFound, body: "{}"},
+		"POST /api/v1/presets/admech-code/chat/completions": {status: http.StatusOK, body: "{}"},
 	})
-	sector := rank.SectorResult{Sector: rank.Math, Rows: []rank.Row{
+	sector := rank.SectorResult{Sector: rank.Code, Rows: []rank.Row{
 		{ModelID: "v/a", Scored: true}, {ModelID: "v/b"},
 	}}
 	buf := captureLog(t)
@@ -343,7 +373,7 @@ func TestUpdatePresetsPointsAtTopModels(t *testing.T) {
 	if len(models) != 1 || models[0] != "v/a" {
 		t.Errorf("models = %v, want only the scored model", models)
 	}
-	if !strings.Contains(buf.String(), "preset admech-math: new version") {
+	if !strings.Contains(buf.String(), "preset admech-code: new version") {
 		t.Errorf("log = %q, want the new-version notice", buf.String())
 	}
 }
@@ -353,21 +383,21 @@ func TestUpdatePresetsPointsAtTopModels(t *testing.T) {
 func TestUpdatePresetsReportsFailures(t *testing.T) {
 	t.Setenv("OPENROUTER_MANAGEMENT_KEY", "or-mgmt-key")
 	s, hc := newStubAPI(t, map[string]stubReply{
-		"GET /api/v1/presets/admech-math":                      {status: http.StatusNotFound, body: "{}"},
-		"GET /api/v1/presets/admech-finance":                   {status: http.StatusNotFound, body: "{}"},
-		"POST /api/v1/presets/admech-math/chat/completions":    {status: http.StatusOK, body: "{}"},
-		"POST /api/v1/presets/admech-finance/chat/completions": {status: http.StatusInternalServerError, body: `{"error":"boom"}`},
+		"GET /api/v1/presets/admech-code":                          {status: http.StatusNotFound, body: "{}"},
+		"GET /api/v1/presets/admech-code-oracle":                   {status: http.StatusNotFound, body: "{}"},
+		"POST /api/v1/presets/admech-code/chat/completions":        {status: http.StatusOK, body: "{}"},
+		"POST /api/v1/presets/admech-code-oracle/chat/completions": {status: http.StatusInternalServerError, body: `{"error":"boom"}`},
 	})
 	sectors := []rank.SectorResult{
-		{Sector: rank.Math, Rows: []rank.Row{{ModelID: "v/a", Scored: true}}},
-		{Sector: rank.Finance, Rows: []rank.Row{{ModelID: "v/b", Scored: true}}},
+		{Sector: rank.Code, Rows: []rank.Row{{ModelID: "v/a", Scored: true}}},
+		{Sector: rank.AdmechOracle, Rows: []rank.Row{{ModelID: "v/b", Scored: true}}},
 	}
 	err := updatePresets(t.Context(), hc, sectors)
 	if err == nil {
 		t.Fatal("updatePresets: nil error, want the joined failure so the run exits nonzero")
 	}
 	msg := err.Error()
-	if !strings.Contains(msg, "1 of 2 preset updates failed") || !strings.Contains(msg, "preset admech-finance") {
+	if !strings.Contains(msg, "1 of 7 preset updates failed") || !strings.Contains(msg, "preset admech-code-oracle") {
 		t.Errorf("error = %q, want the failed count and slug", msg)
 	}
 	if s.requests() != 4 {
@@ -375,5 +405,60 @@ func TestUpdatePresetsReportsFailures(t *testing.T) {
 	}
 	if !strings.Contains(msg, "boom") {
 		t.Errorf("error = %q, want the failing preset's error body kept", msg)
+	}
+}
+
+// TestUpdatePresetsOnlyManagedSlugs: a run carrying every report and legacy
+// preset sector still writes only the seven preset.ManagedSlugs entries.
+func TestUpdatePresetsOnlyManagedSlugs(t *testing.T) {
+	t.Setenv("OPENROUTER_MANAGEMENT_KEY", "or-mgmt-key")
+	script := map[string]stubReply{}
+	for _, slug := range preset.ManagedSlugs() {
+		script["GET /api/v1/presets/"+slug] = stubReply{status: http.StatusNotFound, body: "{}"}
+		script["POST /api/v1/presets/"+slug+"/chat/completions"] = stubReply{status: http.StatusOK, body: "{}"}
+	}
+	s, hc := newStubAPI(t, script)
+	managed := map[rank.Sector]bool{
+		rank.Code: true, rank.AdmechOracle: true, rank.AdmechReviewer: true,
+		rank.AdmechResearcher: true, rank.AdmechAuditor: true,
+		rank.AdmechDelegate: true, rank.AdmechScout: true,
+	}
+	sectors := []rank.SectorResult{
+		{Sector: rank.Math, Rows: []rank.Row{{ModelID: "v/math", Scored: true}}},
+		{Sector: rank.Finance, Rows: []rank.Row{{ModelID: "v/fin", Scored: true}}},
+		{Sector: rank.ExpensiveLong, Rows: []rank.Row{{ModelID: "v/long", Scored: true}}},
+		{Sector: rank.HermesLight, Rows: []rank.Row{{ModelID: "v/light", Scored: true}}},
+		{Sector: rank.Code, Rows: []rank.Row{{ModelID: "v/code", Scored: true}}},
+		{Sector: rank.AdmechOracle, Rows: []rank.Row{{ModelID: "v/oracle", Scored: true}}},
+		{Sector: rank.AdmechReviewer, Rows: []rank.Row{{ModelID: "v/reviewer", Scored: true}}},
+		{Sector: rank.AdmechResearcher, Rows: []rank.Row{{ModelID: "v/researcher", Scored: true}}},
+		{Sector: rank.AdmechAuditor, Rows: []rank.Row{{ModelID: "v/auditor", Scored: true}}},
+		{Sector: rank.AdmechDelegate, Rows: []rank.Row{{ModelID: "v/delegate", Scored: true}}},
+		{Sector: rank.AdmechScout, Rows: []rank.Row{{ModelID: "v/scout", Scored: true}}},
+	}
+	if err := updatePresets(t.Context(), hc, sectors); err != nil {
+		t.Fatalf("updatePresets: %v", err)
+	}
+	allow := make(map[string]bool, len(managed))
+	for sec := range managed {
+		allow[preset.Slugs[sec]] = true
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	posted := map[string]bool{}
+	for _, req := range s.got {
+		if req.method != http.MethodPost {
+			continue
+		}
+		slug, ok := strings.CutPrefix(req.url, "/api/v1/presets/")
+		slug, ok2 := strings.CutSuffix(slug, "/chat/completions")
+		if !ok || !ok2 || !allow[slug] {
+			t.Errorf("POST %s is outside preset.ManagedSlugs()", req.url)
+			continue
+		}
+		posted[slug] = true
+	}
+	if len(posted) != len(managed) {
+		t.Errorf("posted slugs = %v, want exactly the %d managed slugs", posted, len(managed))
 	}
 }

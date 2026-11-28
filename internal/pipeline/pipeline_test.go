@@ -1,11 +1,13 @@
 package pipeline
 
 import (
+	"fmt"
 	"slices"
 	"testing"
 	"time"
 
 	"github.com/tomaszjudym/openrouter-discounter/internal/discounts"
+	"github.com/tomaszjudym/openrouter-discounter/internal/preset"
 	"github.com/tomaszjudym/openrouter-discounter/internal/rank"
 )
 
@@ -86,6 +88,64 @@ func TestDirectSideRoutesOnlyDirect(t *testing.T) {
 	if !slices.ContainsFunc(presets, func(sr rank.SectorResult) bool { return sr.Sector == rank.ExpensiveLong }) {
 		t.Error("presets lack expensive-long")
 	}
+}
+
+// taggedEndpointsBody is endpointsBody with the endpoint tag real
+// OpenRouter endpoints carry; a preset row needs the tag to pin, so
+// rank.Pinnable keeps untagged fixture rows out.
+func taggedEndpointsBody(id string, discount float64) string {
+	return fmt.Sprintf(`{"data":{"id":%q,"endpoints":[{"provider_name":"List","tag":"or/%s",`+
+		`"pricing":{"prompt":"0.0000002","completion":"0.0000008","discount":%v},`+
+		`"supported_parameters":["tools"],"context_length":2000000,`+
+		`"max_completion_tokens":1048576,"supports_tool_choice":{}}]}}`, id, id, discount)
+}
+
+// TestRunEmitsEveryManagedPresetSector: each preset.ManagedSlugs() slug has
+// rows on both sides whenever the day has eligible candidates: admech-code
+// from the code sector and the six admech-code-<role> sectors from
+// rank.SelectAdmech. cmd/tracker and cmd/pipresets rely on these rows to
+// update or emit every managed preset.
+func TestRunEmitsEveryManagedPresetSector(t *testing.T) {
+	hc := runStub{
+		catalog: catalogAll,
+		endpoints: map[string]string{
+			"vendor/alphachat": taggedEndpointsBody("vendor/alphachat", 0.25),
+			"vendor/betachat":  taggedEndpointsBody("vendor/betachat", 0),
+		},
+		darkbloom: darkbloomBody("alphachat"),
+	}.client(t)
+	res := run(t, hc, Keys{Darkbloom: "db-key"})
+	for _, side := range []struct {
+		name    string
+		sectors []rank.SectorResult
+	}{{"openrouter", res.OpenRouter}, {"darkbloom", res.Direct}} {
+		got := make(map[rank.Sector]bool, len(side.sectors))
+		for _, sr := range side.sectors {
+			if len(sr.Rows) > 0 {
+				got[sr.Sector] = true
+			}
+		}
+		for _, slug := range preset.ManagedSlugs() {
+			sector, ok := sectorForSlug(slug)
+			if !ok {
+				t.Errorf("managed slug %s has no rank sector", slug)
+				continue
+			}
+			if !got[sector] {
+				t.Errorf("%s side lacks rows for managed slug %s (sector %s): %v", side.name, slug, sector, got)
+			}
+		}
+	}
+}
+
+// sectorForSlug is preset.Slugs inverted.
+func sectorForSlug(slug string) (rank.Sector, bool) {
+	for sec, s := range preset.Slugs {
+		if s == slug {
+			return sec, true
+		}
+	}
+	return "", false
 }
 
 // TestOpenRouterSideNeverDirect: the OpenRouter side is built from
